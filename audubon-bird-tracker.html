@@ -477,6 +477,22 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 </style>
+<!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XWLQD93LX7"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XWLQD93LX7');
+
+  // Custom events
+  function trackBirdSelect(birdName) {
+    gtag('event', 'select_bird', { bird_name: birdName });
+  }
+  function trackLoadData(from, to) {
+    gtag('event', 'load_data', { date_from: from, date_to: to });
+  }
+</script>
 </head>
 <body>
 
@@ -726,6 +742,7 @@ function renderSidebar() {
 // SELECT BIRD
 // ──────────────────────────────────────────────
 function selectBird(bird) {
+  if (typeof trackBirdSelect === 'function') trackBirdSelect(bird.name);
   activeBird = bird;
   trackLayer.clearLayers();
   markerLayer.clearLayers();
@@ -897,6 +914,7 @@ function renderStats(bird) {
 async function loadAllBirds() {
   const from = document.getElementById('dateFrom').value + 'T00:00:00.000Z';
   const to   = document.getElementById('dateTo').value   + 'T23:59:59.000Z';
+  if (typeof trackLoadData === 'function') trackLoadData(from, to);
 
   setLoading(true, 'Fetching tracks from CLS API…');
   document.getElementById('btnLoad').classList.add('loading');
