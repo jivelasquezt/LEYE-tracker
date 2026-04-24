@@ -1,9 +1,17 @@
-require('dotenv').config();
+require('dotenv').config({ path: '.env' }); // Railway injects vars directly; .env is local only
 const express = require('express');
 const cors    = require('cors');
 const fetch   = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
 const app = express();
+
+// Prevent unhandled rejections from crashing the process
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[crash] Unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[crash] Uncaught exception:', err.message);
+});
 app.use(cors({ origin: (o, cb) => cb(null, true) }));
 app.use(express.json());
 app.use(express.static(__dirname));
@@ -132,7 +140,12 @@ app.get('/api/tracks', async (req,res) => {
   res.json({ devices: tracks });
 });
 
-if (!USERNAME || !PASSWORD) { console.error('❌  Missing CLS_USERNAME or CLS_PASSWORD in .env'); process.exit(1); }
+console.log('[env] CLS_USERNAME:', USERNAME ? USERNAME : 'NOT SET');
+console.log('[env] CLS_PASSWORD:', PASSWORD ? '***set***' : 'NOT SET');
+if (!USERNAME || !PASSWORD) {
+  console.error('❌  Missing CLS_USERNAME or CLS_PASSWORD — set them in Railway Variables tab');
+  process.exit(1);
+}
 
 app.listen(PORT, async () => {
   console.log(`\n🐦  Bird Tracker backend → http://localhost:${PORT}`);
