@@ -254,9 +254,9 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
   </div>
   <div class="nav-controls">
     <span class="date-lbl">From</span>
-    <input class="date-in" type="date" id="dateFrom">
+    <input class="date-in" type="date" id="dateFrom" onchange="applyFilter()">
     <span class="date-lbl">To</span>
-    <input class="date-in" type="date" id="dateTo">
+    <input class="date-in" type="date" id="dateTo" onchange="applyFilter()">
     <button class="btn-load" id="btnLoad" onclick="loadAllBirds()" title="Filter cached data by date range">Filter by Date</button>
     <div class="nav-status">
       <div class="sdot" id="statusDot"></div>
@@ -318,7 +318,25 @@ const BIRDS = [
   {deviceUid:101390,deviceRef:'40808',name:'Cholao 5',color:'#fb923c'},
 ];
 
-let birdData={}, birdLocation={}, activeBird=null;
+let allBirdData={}, birdLocation={}, activeBird=null;
+
+function getFilteredPoints(deviceUid){
+  const pts=allBirdData[deviceUid]||[];
+  const fromVal=document.getElementById('dateFrom').value;
+  const toVal=document.getElementById('dateTo').value;
+  const from=fromVal?fromVal+'T00:00:00.000Z':null;
+  const to=toVal?toVal+'T23:59:59.999Z':null;
+  return pts.filter(p=>(!from||p.dt>=from)&&(!to||p.dt<=to));
+}
+
+function applyFilter(){
+  renderSidebar();
+  if(activeBird){
+    trackLayer.clearLayers(); markerLayer.clearLayers();
+    drawTrack(activeBird);
+    renderStats(activeBird);
+  }
+}
 let map, trackLayer, markerLayer;
 const isMobile = () => window.innerWidth <= 768;
 
@@ -332,7 +350,7 @@ async function autoLoadFromCache(){
 
     let loaded=0;
     for(const t of(data.devices||[])){
-      if(t.points?.length){birdData[t.deviceUid]=t.points;loaded++;}
+      if(t.points?.length){allBirdData[t.deviceUid]=t.points;loaded++;}
     }
 
     if(loaded>0){
@@ -340,10 +358,11 @@ async function autoLoadFromCache(){
         ?(data.cacheAgeMinutes<60?data.cacheAgeMinutes+'m ago':(data.cacheAgeMinutes/60).toFixed(1)+'h ago')
         :'';
       toast(`Loaded ${loaded} birds from cache ${age}`);
-      renderSidebar();
-      const first=BIRDS.find(b=>(birdData[b.deviceUid]||[]).length>0);
+      applyFilter();
+      const first=BIRDS.find(b=>getFilteredPoints(b.deviceUid).length>0)
+        || BIRDS.find(b=>(allBirdData[b.deviceUid]||[]).length>0);
       if(first) selectBird(first);
-      geocodeAll(); // run geocoding in background
+      geocodeAll();
     }
   }catch(e){
     console.warn('[autoload] Cache load failed:',e.message);
@@ -432,8 +451,9 @@ function renderSidebar(){
   const el=document.getElementById('birdList');
   el.innerHTML='';
   BIRDS.forEach(bird=>{
-    const pts=birdData[bird.deviceUid]||[];
-    const has=pts.length>0;
+    const pts=getFilteredPoints(bird.deviceUid);
+    const allPts=allBirdData[bird.deviceUid]||[];
+    const has=allPts.length>0;
     const last=[...pts].sort((a,b)=>b.dt.localeCompare(a.dt))[0];
     const lastStr=last?fmtDateTime(last.dt):'—';
     const place=birdLocation[bird.deviceUid]||(has?'Locating…':'—');
@@ -474,7 +494,7 @@ function selectBird(bird){
 
 /* DRAW TRACK */
 function drawTrack(bird){
-  const pts=(birdData[bird.deviceUid]||[]).filter(p=>p.lat&&p.lon).sort((a,b)=>a.dt.localeCompare(b.dt));
+  const pts=getFilteredPoints(bird.deviceUid).filter(p=>p.lat&&p.lon).sort((a,b)=>a.dt.localeCompare(b.dt));
   if(!pts.length) return;
   L.polyline(pts.map(p=>[p.lat,p.lon]),{color:bird.color,weight:2,opacity:.65,dashArray:'5 8'}).addTo(trackLayer);
   pts.forEach((pt,i)=>{
@@ -501,7 +521,7 @@ function bearing(a,b,c,d){const dl=(d-b)*Math.PI/180,y=Math.sin(dl)*Math.cos(c*M
 function bearingLbl(d){return['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(d/22.5)%16];}
 
 function renderStats(bird){
-  const pts=(birdData[bird.deviceUid]||[]).sort((a,b)=>a.dt.localeCompare(b.dt));
+  const pts=getFilteredPoints(bird.deviceUid).sort((a,b)=>a.dt.localeCompare(b.dt));
   document.getElementById('statsEmpty').style.display='none';
   const sc=document.getElementById('statsContent'); sc.classList.add('on');
   document.getElementById('statsBirdName').textContent=`${bird.name} · ${bird.deviceRef}`;
@@ -538,7 +558,7 @@ async function loadAllBirds(){
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Load failed');
     let loaded=0;
-    for(const t of(data.devices||[])){ if(t.points?.length){birdData[t.deviceUid]=t.points;loaded++;} }
+    for(const t of(data.devices||[])){ if(t.points?.length){allBirdData[t.deviceUid]=t.points;loaded++;} }
     const cacheNote=data.cacheAgeMinutes!=null?` (cache ${data.cacheAgeMinutes<60?data.cacheAgeMinutes+'m':Math.round(data.cacheAgeMinutes/60)+'h'} old)`:'';    toast(`Loaded ${loaded} of ${BIRDS.length} birds${cacheNote}`);
     setLoading(true,'Identifying locations…');
     await geocodeAll();
@@ -546,13 +566,13 @@ async function loadAllBirds(){
   setLoading(false);
   document.getElementById('btnLoad').classList.remove('loading');
   renderSidebar();
-  const first=BIRDS.find(b=>(birdData[b.deviceUid]||[]).length>0);
+  const first=BIRDS.find(b=>(allBirdData[b.deviceUid]||[]).length>0);
   if(first) selectBird(first);
 }
 
 async function geocodeAll(){
   for(const bird of BIRDS){
-    const pts=birdData[bird.deviceUid];
+    const pts=allBirdData[bird.deviceUid];
     if(!pts?.length) continue;
     const last=[...pts].sort((a,b)=>b.dt.localeCompare(a.dt))[0];
     birdLocation[bird.deviceUid]=await reverseGeocode(last.lat,last.lon);
