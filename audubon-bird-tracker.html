@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesser Yellowlegs Migration Tracker — National Audubon Society</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Source+Sans+3:wght@300;400;500;600&family=Source+Code+Pro:wght@300;400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --audubon-blue:    #003865;
+    --audubon-mid:     #005587;
+    --audubon-light:   #0077B6;
+    --audubon-teal:    #00A896;
+    --audubon-warm:    #F4A261;
+    --audubon-red:     #C1440E;
+    --bg:              #001f3a;
+    --panel:           #002848;
+    --panel-light:     #003461;
+    --border:          #004080;
+    --text:            #d8eaf7;
+    --muted:           #5a8fbe;
+    --accent:          #00A896;
+    --warn:            #F4A261;
+    --danger:          #C1440E;
+    --white:           #ffffff;
+    --header-h:        64px;
+    --sidebar-w:       296px;
+    --detail-h:        180px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 13px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    height: var(--header-h);
+    background: var(--audubon-blue);
+    border-bottom: 3px solid var(--audubon-teal);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 18px;
+    flex-shrink: 0;
+    z-index: 1000;
+  }
+
+  .logo { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+
+  .logo-bird {
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    overflow: hidden;
+    border: 2px solid var(--audubon-teal);
+    box-shadow: 0 0 0 1px rgba(0,168,150,0.3);
+  }
+
+  .logo-text-wrap { line-height: 1.15; }
+
+  .logo-title {
+    font-family: 'Merriweather', serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: -0.01em;
+  }
+
+  .logo-sub {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 10px;
+    font-weight: 300;
+    color: var(--audubon-teal);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .header-sep { width: 1px; height: 32px; background: var(--border); flex-shrink: 0; }
+
+  .date-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .date-label {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .date-input {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-family: 'Source Code Pro', monospace;
+    font-size: 11px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color .15s;
+  }
+
+  .date-input:focus { border-color: var(--audubon-teal); }
+
+  .btn-load {
+    padding: 7px 20px;
+    border-radius: 4px;
+    border: none;
+    background: var(--audubon-teal);
+    color: var(--white);
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    transition: background .15s;
+    white-space: nowrap;
+  }
+  .btn-load:hover { background: #008f7e; }
+  .btn-load.loading { background: var(--muted); cursor: not-allowed; }
+
+  .header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+  }
+  .status-dot.ok   { background: var(--audubon-teal); box-shadow: 0 0 6px var(--audubon-teal); }
+  .status-dot.warn { background: var(--warn); }
+  .status-dot.err  { background: var(--danger); }
+
+  .status-text {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* ── BODY ── */
+  .body { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── SIDEBAR ── */
+  aside {
+    width: var(--sidebar-w);
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .sidebar-header {
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--audubon-blue);
+  }
+
+  .sidebar-label {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .sidebar-title {
+    font-family: 'Merriweather', serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--white);
+    line-height: 1.3;
+  }
+
+  .sidebar-subtitle {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .bird-list { overflow-y: auto; flex: 1; padding: 8px; }
+
+  .bird-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 11px 12px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all .15s;
+    position: relative;
+    overflow: hidden;
+    background: var(--panel-light);
+  }
+
+  .bird-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--bird-color, var(--muted));
+  }
+
+  .bird-card:hover { border-color: var(--bird-color, var(--audubon-teal)); background: #003d6e; }
+  .bird-card.active { background: #003d6e; border-color: var(--bird-color, var(--audubon-teal)); box-shadow: 0 0 0 1px var(--bird-color, var(--audubon-teal)) inset; }
+  .bird-card.no-data { opacity: 0.55; cursor: default; }
+  .bird-card.no-data:hover { border-color: var(--border); background: var(--panel-light); }
+
+  .bird-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 5px;
+  }
+
+  .bird-name {
+    font-family: 'Merriweather', serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--white);
+    line-height: 1.2;
+  }
+
+  .bird-tag {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  .bird-location {
+    font-size: 11px;
+    color: var(--audubon-teal);
+    font-style: italic;
+    margin-bottom: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .bird-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .bird-last { font-size: 10px; color: var(--muted); }
+  .bird-pts  { font-family: 'Source Code Pro', monospace; font-size: 10px; color: var(--bird-color, var(--muted)); font-weight: 500; }
+
+  /* ── MAP ── */
+  .map-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+
+  #map { flex: 1; }
+
+  /* ── LEGEND ── */
+  .map-legend {
+    position: absolute;
+    top: 12px; right: 12px;
+    z-index: 500;
+    background: rgba(0,40,72,0.92);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    backdrop-filter: blur(8px);
+  }
+
+  .legend-title {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+  }
+
+  .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .legend-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .legend-lbl  { font-size: 10px; color: var(--text); }
+
+  /* ── LOADING ── */
+  .loading-overlay {
+    display: none;
+    position: absolute; inset: 0;
+    background: rgba(0,24,56,0.75);
+    z-index: 900;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px;
+    backdrop-filter: blur(2px);
+  }
+  .loading-overlay.visible { display: flex; }
+  .spinner { width: 36px; height: 36px; border: 2px solid var(--border); border-top-color: var(--audubon-teal); border-radius: 50%; animation: spin .8s linear infinite; }
+  .loading-text { font-family: 'Source Code Pro', monospace; font-size: 11px; color: var(--muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── STATS PANEL ── */
+  .stats-panel {
+    height: var(--detail-h);
+    background: var(--audubon-blue);
+    border-top: 2px solid var(--audubon-teal);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .stats-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 20px 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stats-bird-name {
+    font-family: 'Merriweather', serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--white);
+  }
+
+  .stats-period {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  .stats-grid {
+    display: flex;
+    flex: 1;
+    align-items: stretch;
+    padding: 0 8px;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  .stat-cell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 8px 12px;
+    border-right: 1px solid var(--border);
+    min-width: 0;
+  }
+
+  .stat-cell:last-child { border-right: none; }
+
+  .stat-key {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    white-space: nowrap;
+  }
+
+  .stat-val {
+    font-family: 'Merriweather', serif;
+    font-size: 22px;
+    font-weight: 300;
+    color: var(--white);
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .stat-unit {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 11px;
+    color: var(--muted);
+    margin-left: 3px;
+  }
+
+  .stat-sub {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .stats-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Merriweather', serif;
+    font-style: italic;
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  /* ── CLICK DETAIL POPUP ── */
+  .point-detail {
+    display: none;
+    position: absolute;
+    bottom: calc(var(--detail-h) + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,40,72,0.96);
+    border: 1px solid var(--audubon-teal);
+    border-radius: 6px;
+    padding: 10px 18px;
+    z-index: 600;
+    backdrop-filter: blur(8px);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .point-detail.visible { display: flex; gap: 20px; align-items: center; }
+
+  .pd-item { display: flex; flex-direction: column; gap: 2px; }
+  .pd-key { font-family: 'Source Code Pro', monospace; font-size: 9px; color: var(--muted); letter-spacing: 0.14em; text-transform: uppercase; }
+  .pd-val { font-family: 'Merriweather', serif; font-size: 14px; color: var(--white); }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed; bottom: 20px; left: 50%;
+    transform: translateX(-50%) translateY(60px);
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 20px; border-radius: 4px;
+    font-family: 'Source Code Pro', monospace; font-size: 11px;
+    z-index: 9999; transition: transform .3s; pointer-events: none;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* ── LEAFLET OVERRIDES ── */
+  .leaflet-popup-content-wrapper {
+    background: rgba(0,40,72,0.96) !important;
+    border: 1px solid var(--audubon-teal) !important;
+    border-radius: 6px !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5) !important;
+    color: var(--text) !important;
+  }
+  .leaflet-popup-tip { background: rgba(0,40,72,0.96) !important; }
+  .leaflet-popup-content { margin: 10px 14px !important; font-family: 'Source Code Pro', monospace; font-size: 11px; line-height: 1.6; }
+  .leaflet-popup-close-button { color: var(--muted) !important; top: 4px !important; right: 6px !important; }
+  .leaflet-control-attribution { background: rgba(0,0,0,.5) !important; color: #4a7a9b !important; font-size: 9px !important; }
+  .leaflet-control-attribution a { color: #4a7a9b !important; }
+  .leaflet-bar a { background: var(--panel) !important; color: var(--text) !important; border-color: var(--border) !important; }
+  .leaflet-bar a:hover { background: var(--panel-light) !important; }
+  .leaflet-control-layers { background: rgba(0,40,72,0.95) !important; border: 1px solid var(--border) !important; border-radius: 6px !important; }
+  .leaflet-control-layers-base label { color: var(--text) !important; font-family: 'Source Sans 3', sans-serif !important; font-size: 12px !important; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-bird">
+      <!-- Lesser Yellowlegs silhouette SVG -->
+      <svg viewBox="0 0 46 46" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="23" cy="23" r="23" fill="#003865"/>
+        <!-- Body -->
+        <ellipse cx="22" cy="26" rx="10" ry="6" fill="#00A896" opacity="0.9"/>
+        <!-- Head -->
+        <circle cx="30" cy="19" r="5" fill="#00A896" opacity="0.9"/>
+        <!-- Bill - long and straight, pointing right -->
+        <line x1="35" y1="18.5" x2="44" y2="17.5" stroke="#00A896" stroke-width="1.5" stroke-linecap="round"/>
+        <!-- Neck -->
+        <path d="M27 22 Q29 20 30 24" fill="#00A896" opacity="0.9"/>
+        <!-- Wing detail -->
+        <path d="M14 24 Q18 20 26 23" stroke="#005587" stroke-width="1" fill="none"/>
+        <path d="M14 26 Q18 22 26 25" stroke="#005587" stroke-width="0.8" fill="none"/>
+        <!-- Tail -->
+        <path d="M12 26 Q9 24 8 22" stroke="#00A896" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <!-- Long yellow legs -->
+        <line x1="19" y1="32" x2="17" y2="42" stroke="#F4A261" stroke-width="1.8" stroke-linecap="round"/>
+        <line x1="24" y1="32" x2="22" y2="42" stroke="#F4A261" stroke-width="1.8" stroke-linecap="round"/>
+        <!-- Feet -->
+        <line x1="17" y1="42" x2="14" y2="43" stroke="#F4A261" stroke-width="1.2" stroke-linecap="round"/>
+        <line x1="17" y1="42" x2="19" y2="43.5" stroke="#F4A261" stroke-width="1.2" stroke-linecap="round"/>
+        <line x1="22" y1="42" x2="19" y2="43" stroke="#F4A261" stroke-width="1.2" stroke-linecap="round"/>
+        <line x1="22" y1="42" x2="24" y2="43.5" stroke="#F4A261" stroke-width="1.2" stroke-linecap="round"/>
+        <!-- Eye -->
+        <circle cx="31.5" cy="18" r="1" fill="white"/>
+        <circle cx="31.5" cy="18" r="0.5" fill="#001f3a"/>
+      </svg>
+    </div>
+    <div class="logo-text-wrap">
+      <div class="logo-title">Lesser Yellowlegs Migration Tracker</div>
+      <div class="logo-sub">National Audubon Society</div>
+    </div>
+  </div>
+
+  <div class="header-sep"></div>
+
+  <div class="date-controls">
+    <span class="date-label">From</span>
+    <input class="date-input" type="date" id="dateFrom">
+    <span class="date-label">To</span>
+    <input class="date-input" type="date" id="dateTo">
+    <button class="btn-load" id="btnLoad" onclick="loadAllBirds()">Load Data</button>
+  </div>
+
+  <div class="header-right">
+    <div class="status-dot" id="statusDot"></div>
+    <span class="status-text" id="statusText">Connecting…</span>
+  </div>
+</header>
+
+<div class="body">
+
+  <aside>
+    <div class="sidebar-header">
+      <div class="sidebar-label">Tracked Individuals</div>
+      <div class="sidebar-title">Lesser Yellowlegs</div>
+      <div class="sidebar-subtitle"><em>Tringa flavipes</em> · 5 tagged birds</div>
+    </div>
+    <div class="bird-list" id="birdList"></div>
+  </aside>
+
+  <div class="map-container">
+    <div id="map"></div>
+
+    <div class="map-legend">
+      <div class="legend-title">Location Accuracy</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#00A896"></div><div class="legend-lbl">Class A / 1-3 (High)</div></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#F4A261"></div><div class="legend-lbl">Class B (Medium)</div></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#5a8fbe"></div><div class="legend-lbl">Unknown</div></div>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loadingText">Loading tracks…</div>
+    </div>
+
+    <div class="point-detail" id="pointDetail"></div>
+
+    <!-- Stats Panel -->
+    <div class="stats-panel" id="statsPanel">
+      <div class="stats-empty" id="statsEmpty">
+        ← Select a bird to view flight statistics
+      </div>
+      <div id="statsContent" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+        <div class="stats-header">
+          <div class="stats-bird-name" id="statsBirdName">—</div>
+          <div class="stats-period" id="statsPeriod">—</div>
+        </div>
+        <div class="stats-grid" id="statsGrid"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ──────────────────────────────────────────────
+// CONFIG
+// ──────────────────────────────────────────────
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3001'
+  : window.location.origin;
+
+// Birds in display order with real device UIDs
+const BIRDS = [
+  { deviceUid: 101392, deviceRef: '40801', name: 'Cholao 1', color: '#00A896' },
+  { deviceUid: 101394, deviceRef: '40811', name: 'Cholao 2', color: '#F4A261' },
+  { deviceUid: 101391, deviceRef: '40790', name: 'Cholao 3', color: '#90E0EF' },
+  { deviceUid: 101393, deviceRef: '40804', name: 'Cholao 4', color: '#a78bfa' },
+  { deviceUid: 101390, deviceRef: '40808', name: 'Cholao 5', color: '#f9a8d4' },
+];
+
+// ──────────────────────────────────────────────
+// STATE
+// ──────────────────────────────────────────────
+let birdData     = {};   // deviceUid → points[]
+let birdLocation = {};   // deviceUid → place name string
+let activeBird   = null;
+let map, trackLayer, markerLayer;
+
+// ──────────────────────────────────────────────
+// DATE DEFAULTS — last 24 hours
+// ──────────────────────────────────────────────
+function initDates() {
+  const now  = new Date();
+  const past = new Date(now - 24 * 60 * 60 * 1000);
+  document.getElementById('dateTo').value   = now.toISOString().split('T')[0];
+  document.getElementById('dateFrom').value = past.toISOString().split('T')[0];
+}
+
+// ──────────────────────────────────────────────
+// INIT
+// ──────────────────────────────────────────────
+function init() {
+  initDates();
+
+  map = L.map('map', { zoomControl: true })
+    .setView([3.19, -76.54], 11);
+
+  // Satellite hybrid: imagery + labels on top
+  const satellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'Tiles © Esri — Source: Esri, USGS, NOAA', maxZoom: 19 }
+  );
+  const labels = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { attribution: '', maxZoom: 19, opacity: 1 }
+  );
+  const topo = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'Tiles © Esri', maxZoom: 19 }
+  );
+  const street = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'Tiles © Esri', maxZoom: 19 }
+  );
+
+  // Hybrid group = satellite + labels
+  const hybrid = L.layerGroup([satellite, labels]).addTo(map);
+
+  L.control.layers(
+    { '🛰 Satellite + Labels': hybrid, '🗺 Topo': topo, '🏙 Street': street },
+    {}, { position: 'bottomleft' }
+  ).addTo(map);
+
+  trackLayer  = L.layerGroup().addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+
+  checkBackend();
+  setInterval(checkBackend, 30000);
+  renderSidebar();
+}
+
+// ──────────────────────────────────────────────
+// GEOCODING — reverse geocode last point
+// ──────────────────────────────────────────────
+async function reverseGeocode(lat, lon) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=8`;
+    const res  = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    const data = await res.json();
+    const a    = data.address || {};
+
+    // Ocean detection
+    if (data.type === 'sea' || data.type === 'ocean' || a.body_of_water) {
+      return data.name || a.body_of_water || 'Open Ocean';
+    }
+
+    // Admin level 2 = county/municipality
+    const adm2 = a.county || a.municipality || a.city_district || a.state_district;
+    const adm1 = a.state  || a.region;
+    const country = a.country_code?.toUpperCase();
+
+    if (adm2 && adm1) return `${adm2}, ${adm1}`;
+    if (adm2)          return adm2;
+    if (adm1)          return `${adm1}, ${country}`;
+    return data.display_name?.split(',').slice(0,2).join(',').trim() || 'Unknown';
+  } catch(e) {
+    return '—';
+  }
+}
+
+// ──────────────────────────────────────────────
+// SIDEBAR
+// ──────────────────────────────────────────────
+function renderSidebar() {
+  const el = document.getElementById('birdList');
+  el.innerHTML = '';
+  BIRDS.forEach(bird => {
+    const pts     = birdData[bird.deviceUid] || [];
+    const hasData = pts.length > 0;
+    const sorted  = [...pts].sort((a,b) => b.dt.localeCompare(a.dt));
+    const last    = sorted[0];
+    const lastStr = last ? fmtDate(last.dt) : '—';
+    const place   = birdLocation[bird.deviceUid] || (hasData ? 'Locating…' : 'No data');
+
+    const card = document.createElement('div');
+    card.className = 'bird-card' + (!hasData ? ' no-data' : '') + (activeBird?.deviceUid === bird.deviceUid ? ' active' : '');
+    card.style.setProperty('--bird-color', bird.color);
+    card.innerHTML = `
+      <div class="bird-card-top">
+        <div>
+          <div class="bird-name">${bird.name}</div>
+          <div class="bird-tag">DEV · ${bird.deviceRef}</div>
+        </div>
+      </div>
+      <div class="bird-location">📍 ${place}</div>
+      <div class="bird-meta">
+        <div class="bird-last">Last: ${lastStr}</div>
+        <div class="bird-pts">${hasData ? pts.length + ' pts' : 'No data'}</div>
+      </div>`;
+    if (hasData) card.onclick = () => selectBird(bird);
+    el.appendChild(card);
+  });
+}
+
+// ──────────────────────────────────────────────
+// SELECT BIRD
+// ──────────────────────────────────────────────
+function selectBird(bird) {
+  activeBird = bird;
+  trackLayer.clearLayers();
+  markerLayer.clearLayers();
+  renderSidebar();
+  drawTrack(bird);
+  renderStats(bird);
+}
+
+// ──────────────────────────────────────────────
+// DRAW TRACK
+// ──────────────────────────────────────────────
+function drawTrack(bird) {
+  const pts = (birdData[bird.deviceUid] || [])
+    .filter(p => p.lat && p.lon)
+    .sort((a,b) => a.dt.localeCompare(b.dt));
+  if (!pts.length) return;
+
+  // Polyline
+  L.polyline(pts.map(p => [p.lat, p.lon]), {
+    color: bird.color, weight: 2, opacity: 0.7, dashArray: '5 7'
+  }).addTo(trackLayer);
+
+  // Markers
+  pts.forEach((pt, i) => {
+    const isLast = i === pts.length - 1;
+    const color  = classColor(pt.cls);
+
+    const m = L.circleMarker([pt.lat, pt.lon], {
+      radius: isLast ? 10 : 6,
+      fillColor: color,
+      color: isLast ? '#ffffff' : bird.color,
+      weight: isLast ? 2.5 : 1,
+      fillOpacity: isLast ? 1 : 0.8,
+    }).addTo(markerLayer);
+
+    m.bindTooltip(`
+      <b style="color:${color}">${pt.dt.replace('T',' ').slice(0,16)} UTC</b><br>
+      ${pt.lat.toFixed(5)}°N &nbsp; ${Math.abs(pt.lon).toFixed(5)}°W<br>
+      Alt: <b>${pt.alt}m</b> &nbsp; Err: ±${pt.err}m &nbsp; Class ${pt.cls}<br>
+      Sat: ${pt.sat}
+    `, { direction: 'top', offset: [0, -5] });
+
+    m.on('click', () => showPointDetail(pt, bird));
+  });
+
+  map.fitBounds(L.latLngBounds(pts.map(p=>[p.lat,p.lon])).pad(0.25));
+}
+
+function classColor(cls) {
+  if (['A','1','2','3'].includes(String(cls))) return '#00A896';
+  if (cls === 'B') return '#F4A261';
+  return '#5a8fbe';
+}
+
+// ──────────────────────────────────────────────
+// POINT DETAIL POPUP
+// ──────────────────────────────────────────────
+function showPointDetail(pt, bird) {
+  const el = document.getElementById('pointDetail');
+  el.classList.add('visible');
+  el.innerHTML = `
+    <div class="pd-item"><div class="pd-key">Date / Time</div><div class="pd-val">${pt.dt.replace('T',' ').slice(0,16)} UTC</div></div>
+    <div class="pd-item"><div class="pd-key">Latitude</div><div class="pd-val">${pt.lat.toFixed(5)}° N</div></div>
+    <div class="pd-item"><div class="pd-key">Longitude</div><div class="pd-val">${Math.abs(pt.lon).toFixed(5)}° W</div></div>
+    <div class="pd-item"><div class="pd-key">Altitude</div><div class="pd-val">${pt.alt} m</div></div>
+    <div class="pd-item"><div class="pd-key">Accuracy</div><div class="pd-val" style="color:${classColor(pt.cls)}">Class ${pt.cls} ±${pt.err}m</div></div>
+    <div class="pd-item"><div class="pd-key">Satellite</div><div class="pd-val">${pt.sat}</div></div>
+  `;
+}
+
+// ──────────────────────────────────────────────
+// FLIGHT STATS
+// ──────────────────────────────────────────────
+function haversine(lat1, lon1, lat2, lon2) {
+  const R  = 6371; // km
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLon = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function bearing(lat1, lon1, lat2, lon2) {
+  const dLon = (lon2-lon1)*Math.PI/180;
+  const y = Math.sin(dLon)*Math.cos(lat2*Math.PI/180);
+  const x = Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) - Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos(dLon);
+  const b = (Math.atan2(y,x)*180/Math.PI + 360) % 360;
+  return b;
+}
+
+function bearingLabel(deg) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg/22.5) % 16];
+}
+
+function renderStats(bird) {
+  const pts = (birdData[bird.deviceUid] || []).sort((a,b) => a.dt.localeCompare(b.dt));
+  document.getElementById('statsEmpty').style.display = 'none';
+  const sc = document.getElementById('statsContent');
+  sc.style.display = 'flex';
+
+  document.getElementById('statsBirdName').textContent = `${bird.name} (${bird.deviceRef})`;
+
+  if (pts.length < 2) {
+    document.getElementById('statsPeriod').textContent = 'Insufficient data';
+    document.getElementById('statsGrid').innerHTML = `<div style="padding:16px;color:var(--muted);font-style:italic">Not enough points to compute flight statistics.</div>`;
+    return;
+  }
+
+  const first = pts[0], last = pts[pts.length-1];
+
+  // Duration
+  const dtFirst = new Date(first.dt+'Z'), dtLast = new Date(last.dt+'Z');
+  const durMs  = dtLast - dtFirst;
+  const durH   = durMs / 3600000;
+  const durStr = durH < 24
+    ? `${Math.floor(durH)}h ${Math.round((durH%1)*60)}m`
+    : `${(durH/24).toFixed(1)} days`;
+
+  // Cumulative distance
+  let cumDist = 0;
+  for (let i=1; i<pts.length; i++) cumDist += haversine(pts[i-1].lat, pts[i-1].lon, pts[i].lat, pts[i].lon);
+
+  // Straight-line distance
+  const straightDist = haversine(first.lat, first.lon, last.lat, last.lon);
+
+  // Average speed (km/h)
+  const avgSpeed = durH > 0 ? (cumDist / durH) : 0;
+
+  // Overall direction
+  const deg = bearing(first.lat, first.lon, last.lat, last.lon);
+  const dir = bearingLabel(deg);
+
+  // Period label
+  const p1 = fmtDate(first.dt), p2 = fmtDate(last.dt);
+  document.getElementById('statsPeriod').textContent = `${p1} → ${p2}`;
+
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat-cell">
+      <div class="stat-key">Flight Duration</div>
+      <div class="stat-val">${durStr}</div>
+      <div class="stat-sub">${pts.length} position fixes</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-key">Cumulative Distance</div>
+      <div class="stat-val">${cumDist.toFixed(1)}<span class="stat-unit">km</span></div>
+      <div class="stat-sub">Along recorded path</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-key">Straight-line Distance</div>
+      <div class="stat-val">${straightDist.toFixed(1)}<span class="stat-unit">km</span></div>
+      <div class="stat-sub">Start → most recent fix</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-key">Avg Ground Speed</div>
+      <div class="stat-val">${avgSpeed.toFixed(1)}<span class="stat-unit">km/h</span></div>
+      <div class="stat-sub">${(avgSpeed * 0.621371).toFixed(1)} mph</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-key">Overall Direction</div>
+      <div class="stat-val">${dir}</div>
+      <div class="stat-sub">${deg.toFixed(0)}° bearing</div>
+    </div>
+  `;
+}
+
+// ──────────────────────────────────────────────
+// LOAD DATA
+// ──────────────────────────────────────────────
+async function loadAllBirds() {
+  const from = document.getElementById('dateFrom').value + 'T00:00:00.000Z';
+  const to   = document.getElementById('dateTo').value   + 'T23:59:59.000Z';
+
+  setLoading(true, 'Fetching tracks from CLS API…');
+  document.getElementById('btnLoad').classList.add('loading');
+
+  try {
+    const res  = await fetch(`${API_BASE}/api/tracks?from=${from}&to=${to}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Load failed');
+
+    let loaded = 0;
+    for (const track of (data.devices || [])) {
+      if (track.points?.length) {
+        birdData[track.deviceUid] = track.points;
+        loaded++;
+      }
+    }
+    toast(`Loaded ${loaded} of ${BIRDS.length} birds`);
+
+    // Geocode last positions in background
+    setLoading(true, 'Identifying locations…');
+    await geocodeAll();
+
+  } catch(e) {
+    toast('Error: ' + e.message);
+    console.error(e);
+  }
+
+  setLoading(false);
+  document.getElementById('btnLoad').classList.remove('loading');
+  renderSidebar();
+
+  // Auto-select first bird with data
+  const first = BIRDS.find(b => (birdData[b.deviceUid]||[]).length > 0);
+  if (first) selectBird(first);
+}
+
+async function geocodeAll() {
+  for (const bird of BIRDS) {
+    const pts = birdData[bird.deviceUid];
+    if (!pts?.length) continue;
+    const last = [...pts].sort((a,b) => b.dt.localeCompare(a.dt))[0];
+    birdLocation[bird.deviceUid] = await reverseGeocode(last.lat, last.lon);
+    renderSidebar(); // update as each comes in
+  }
+}
+
+// ──────────────────────────────────────────────
+// BACKEND HEALTH
+// ──────────────────────────────────────────────
+async function checkBackend() {
+  try {
+    const res  = await fetch(`${API_BASE}/health`);
+    const data = await res.json();
+    const dot  = document.getElementById('statusDot');
+    const txt  = document.getElementById('statusText');
+    if (data.status === 'ok' && data.tokenValid) {
+      dot.className = 'status-dot ok';
+      txt.textContent = `Connected · token valid ${data.tokenExpiresIn}s`;
+    } else {
+      dot.className = 'status-dot warn';
+      txt.textContent = 'Connected · refreshing token…';
+    }
+  } catch(e) {
+    document.getElementById('statusDot').className = 'status-dot err';
+    document.getElementById('statusText').textContent = 'Backend offline — run: node server.js';
+  }
+}
+
+// ──────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────
+function fmtDate(dt) {
+  return new Date(dt + (dt.endsWith('Z') ? '' : 'Z'))
+    .toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+
+function setLoading(v, msg='') {
+  document.getElementById('loadingOverlay').classList.toggle('visible', v);
+  if (msg) document.getElementById('loadingText').textContent = msg;
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ──────────────────────────────────────────────
+// START
+// ──────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
