@@ -21,7 +21,7 @@ const API_BASE  = 'https://api.groupcls.com/telemetry/api/v1';
 const CLIENT_ID = 'api-telemetry';
 const USERNAME  = process.env.CLS_USERNAME;
 const PASSWORD  = process.env.CLS_PASSWORD;
-const PORT      = process.env.PORT || 3001;
+const PORT      = parseInt(process.env.PORT) || 3001;
 
 let tokenStore = { accessToken:null, refreshToken:null, expiresAt:0, refreshExpiresAt:0 };
 
@@ -148,8 +148,9 @@ if (!USERNAME || !PASSWORD) {
 }
 
 app.listen(PORT, async () => {
-  console.log(`\n🐦  Bird Tracker backend → http://localhost:${PORT}`);
-  console.log(`    Open: http://localhost:${PORT}/audubon-bird-tracker.html\n`);
+  console.log(`\n🐦  Bird Tracker backend running on PORT ${PORT}`);
+  console.log(`    process.env.PORT = ${process.env.PORT}`);
+  console.log(`    Open: /audubon-bird-tracker.html\n`);
   try { await getAccessToken(); console.log('✅  Auth OK\n'); }
   catch(e) { console.error('❌  Auth failed:', e.message); }
 });
