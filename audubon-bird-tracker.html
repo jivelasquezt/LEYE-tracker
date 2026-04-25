@@ -151,7 +151,8 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
 /* ═══════════════════════════════════════
    MOBILE  — stacks vertically, map-first
    ═══════════════════════════════════════ */
-@media(max-width:900px){
+@media(max-width:900px),
+.mobile-layout {
   body{
     overflow:hidden;
     height:100dvh;
@@ -308,7 +309,8 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
   .loading-ov{z-index:700;}
 }
 
-@media(max-width:400px){
+@media(max-width:400px),
+.mobile-layout.narrow {
   .bird-thumb{display:none;}
   .bird-card{min-width:150px;}
   .date-in{width:88px;font-size:10px;}
@@ -711,6 +713,22 @@ function fmtDateTime(dt){
 function setLoading(v,msg=''){document.getElementById('loadingOverlay').classList.toggle('visible',v);if(msg)document.getElementById('loadingText').textContent=msg;}
 let _tt;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>el.classList.remove('show'),3500);}
+
+// Detect mobile and force mobile layout class
+function detectMobile(){
+  const w = window.innerWidth;
+  const ua = navigator.userAgent;
+  const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const isNarrow = w <= 900;
+  if(isMobileUA || isNarrow){
+    document.body.classList.add('mobile-layout');
+    if(w <= 400) document.body.classList.add('narrow');
+  } else {
+    document.body.classList.remove('mobile-layout','narrow');
+  }
+}
+detectMobile();
+window.addEventListener('resize', detectMobile);
 
 init();
 checkBackend();
