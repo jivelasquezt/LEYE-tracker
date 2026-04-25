@@ -149,110 +149,169 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
 .leaflet-control-layers-base label{color:rgba(255,255,255,.8)!important;font-size:12px!important;}
 
 /* ═══════════════════════════════════════
-   MOBILE  — full map-first experience
+   MOBILE  — stacks vertically, map-first
    ═══════════════════════════════════════ */
-@media(max-width:768px){
-  body{overflow:hidden;height:100dvh;height:100vh;display:flex;flex-direction:column;}
+@media(max-width:900px){
+  body{
+    overflow:hidden;
+    height:100dvh;
+    flex-direction:column;
+    display:flex;
+  }
 
-  /* Compact nav: two rows */
-  nav{flex-wrap:wrap;height:auto;padding:8px 12px;gap:6px;}
-  .audubon-logo{height:24px;}
-  .bird-thumb{width:28px;height:28px;}
+  /* ── NAV: one compact row ── */
+  nav{
+    flex-wrap:nowrap;
+    height:auto;
+    padding:6px 10px;
+    gap:8px;
+    flex-shrink:0;
+  }
+  .nav-logo{gap:6px;flex-shrink:0;}
+  .audubon-logo{height:22px;}
+  .bird-thumb{width:26px;height:26px;}
   .nav-sep{display:none;}
   .nav-title-wrap{display:none;}
-  .nav-controls{margin-left:0;width:100%;gap:5px;}
+  .nav-controls{
+    margin-left:auto;
+    gap:5px;
+    flex-wrap:nowrap;
+  }
   .date-lbl{display:none;}
-  .date-in{flex:1;min-width:0;font-size:12px;padding:6px 8px;}
+  .date-in{
+    width:100px;
+    font-size:11px;
+    padding:4px 6px;
+  }
+  .btn-load{
+    padding:5px 10px;
+    font-size:11px;
+  }
   .nav-status{display:none;}
 
-  /* Main stacks vertically */
-  .main{flex-direction:column;overflow:hidden;flex:1;min-height:0;}
+  /* ── MAIN: vertical stack ── */
+  .main{
+    display:flex;
+    flex-direction:column;
+    flex:1;
+    overflow:hidden;
+    min-height:0;
+  }
 
-  /* ── BIRD LIST — horizontal strip, always visible ── */
+  /* ── SIDEBAR: compact horizontal strip at top ── */
   .sidebar{
     width:100%;
     height:auto;
-    max-height:45vh;
     flex-shrink:0;
     border-right:none;
     border-bottom:1px solid var(--border);
     overflow:hidden;
+    max-height:none;
   }
-  .sidebar-top{padding:10px 12px 8px;}
-  .s-heading{font-size:14px;}
+  .sidebar-top{
+    padding:8px 12px 6px;
+  }
+  .s-eyebrow{display:none;}
+  .s-heading{font-size:13px;}
+  .s-sub{display:none;}
   .bird-list{
     display:flex;
     flex-direction:row;
     overflow-x:auto;
     overflow-y:hidden;
-    padding:6px 8px;
+    padding:6px 8px 8px;
     gap:8px;
-    background:var(--off-white);
     flex:none;
+    -webkit-overflow-scrolling:touch;
   }
   .bird-card{
-    min-width:180px;
+    min-width:160px;
+    max-width:200px;
     flex-shrink:0;
     margin-bottom:0;
   }
+  .card-body{padding:8px 10px;}
+  .card-icon{width:40px;height:40px;}
+  .card-meta{padding:5px 10px 7px;}
 
-  /* ── MAP — fills remaining space ── */
+  /* ── MAP: fills remaining space ── */
   .map-wrap{
     flex:1;
-    min-height:200px;
+    min-height:0;
     position:relative;
     overflow:hidden;
   }
   #map{
-    position:absolute;
-    inset:0;
-    width:100%!important;
-    height:100%!important;
+    position:absolute !important;
+    top:0 !important;
+    left:0 !important;
+    right:0 !important;
+    bottom:0 !important;
+    width:100% !important;
+    height:100% !important;
   }
 
-  /* ── STATS — floating bottom sheet over map ── */
+  /* ── STATS: bottom sheet over map ── */
   .stats-panel{
     position:absolute;
-    bottom:0;left:0;right:0;
+    bottom:0;
+    left:0;
+    right:0;
     z-index:600;
     border-radius:14px 14px 0 0;
-    border-top:2px solid var(--blue);
-    max-height:55%;
+    border-top:3px solid var(--blue);
+    max-height:60%;
     overflow-y:auto;
-    transform:translateY(calc(100% - 44px)); /* collapsed: show handle only */
+    transform:translateY(calc(100% - 42px));
     transition:transform .3s ease;
+    box-shadow:0 -4px 20px rgba(0,0,0,.15);
   }
-  .stats-panel.expanded{transform:translateY(0);}
-
+  .stats-panel.expanded{
+    transform:translateY(0);
+  }
   /* Drag handle */
   .stats-panel::before{
     content:'';
     display:block;
-    width:36px;height:4px;
+    width:40px;
+    height:4px;
     background:var(--border);
     border-radius:2px;
-    margin:10px auto 6px;
+    margin:10px auto 4px;
     cursor:pointer;
-    flex-shrink:0;
   }
-
-  .stats-empty{padding:2px 16px 12px;font-size:12px;}
-  .stats-head{padding:4px 16px 8px;}
+  .stats-empty{
+    padding:4px 16px 14px;
+    font-size:12px;
+    text-align:center;
+  }
+  .stats-head{padding:6px 14px 8px;}
   .stats-name{font-size:12px;}
-
-  /* Stack stat cells vertically on mobile */
-  .stats-grid{flex-direction:column;}
-  .sc{border-right:none;border-bottom:1px solid var(--border);min-width:unset;display:flex;align-items:center;justify-content:space-between;padding:9px 16px;}
+  .stats-period{font-size:10px;}
+  /* Stack stat cells vertically */
+  .stats-grid{flex-direction:column;overflow-x:hidden;}
+  .sc{
+    border-right:none;
+    border-bottom:1px solid var(--border);
+    min-width:unset;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:10px 16px;
+  }
   .sc:last-child{border-bottom:none;}
-  .sv{font-size:20px;}
+  .sk{margin-bottom:0;}
+  .sv{font-size:22px;}
 
+  /* Legend hidden on mobile */
   .map-legend{display:none;}
   .loading-ov{z-index:700;}
 }
 
 @media(max-width:400px){
   .bird-thumb{display:none;}
-  .bird-card{min-width:160px;}
+  .bird-card{min-width:150px;}
+  .date-in{width:88px;font-size:10px;}
 }
 
 ::-webkit-scrollbar{width:4px;height:4px;}
