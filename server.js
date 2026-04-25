@@ -1,17 +1,16 @@
 require('dotenv').config();
 const express  = require('express');
 const cors     = require('cors');
-const fs       = require('fs');
-const path     = require('path');
-const fetch    = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+const { Pool } = require('pg');
+const fetch    = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
 
 const app = express();
 app.use(cors({ origin: (o, cb) => cb(null, true) }));
 app.use(express.json());
 app.use(express.static(__dirname));
 
-process.on('unhandledRejection', (r) => console.error('[crash] unhandledRejection:', r));
-process.on('uncaughtException',  (e) => console.error('[crash] uncaughtException:', e.message));
+process.on('unhandledRejection', r  => console.error('[crash] unhandledRejection:', r));
+process.on('uncaughtException',  e  => console.error('[crash] uncaughtException:', e.message));
 
 // ─────────────────────────────────────────────
 // CONFIG
@@ -22,17 +21,96 @@ const CLIENT_ID     = 'api-telemetry';
 const USERNAME      = process.env.CLS_USERNAME;
 const PASSWORD      = process.env.CLS_PASSWORD;
 const PORT          = parseInt(process.env.PORT) || 3001;
-const CACHE_FILE    = path.join(__dirname, 'cache.json');
-const POLL_INTERVAL = 60 * 60 * 1000; // 1 hour in ms
-const BACKFILL_FROM = '2025-01-01T00:00:00.000Z'; // full history start
+const POLL_INTERVAL = 15 * 60 * 1000;   // 15 minutes
+const BACKFILL_FROM = '2025-01-01T00:00:00.000Z';
+
+// ─────────────────────────────────────────────
+// DATABASE
+// ─────────────────────────────────────────────
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('railway')
+    ? { rejectUnauthorized: false }
+    : false,
+});
+
+async function initDB() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS detections (
+      device_uid   BIGINT       NOT NULL,
+      device_ref   TEXT         NOT NULL,
+      detected_at  TIMESTAMPTZ  NOT NULL,
+      lat          DOUBLE PRECISION NOT NULL,
+      lon          DOUBLE PRECISION NOT NULL,
+      alt          REAL,
+      error_m      REAL,
+      loc_class    TEXT,
+      n_messages   INTEGER,
+      satellite    TEXT,
+      PRIMARY KEY (device_uid, detected_at)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_detections_device_time
+      ON detections (device_uid, detected_at DESC);
+
+    CREATE TABLE IF NOT EXISTS poll_state (
+      id          INTEGER PRIMARY KEY DEFAULT 1,
+      checkpoint  BIGINT  NOT NULL DEFAULT 0,
+      last_poll   TIMESTAMPTZ,
+      backfilled  BOOLEAN NOT NULL DEFAULT FALSE
+    );
+
+    INSERT INTO poll_state (id, checkpoint, backfilled)
+    VALUES (1, 0, FALSE)
+    ON CONFLICT (id) DO NOTHING;
+  `);
+  console.log('[db] Schema ready');
+}
+
+async function insertDetections(rows) {
+  if (!rows.length) return 0;
+  // Batch upsert — ON CONFLICT DO NOTHING deduplicates automatically
+  const values = rows.map((r, i) => {
+    const base = i * 9;
+    return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},$${base+9})`;
+  }).join(',');
+
+  const params = rows.flatMap(r => [
+    r.device_uid, r.device_ref, r.detected_at,
+    r.lat, r.lon, r.alt, r.error_m, r.loc_class, r.satellite,
+  ]);
+
+  const res = await db.query(`
+    INSERT INTO detections
+      (device_uid, device_ref, detected_at, lat, lon, alt, error_m, loc_class, satellite)
+    VALUES ${values}
+    ON CONFLICT (device_uid, detected_at) DO NOTHING
+    RETURNING device_uid
+  `, params);
+
+  return res.rowCount;
+}
+
+async function getPollState() {
+  const res = await db.query('SELECT * FROM poll_state WHERE id = 1');
+  return res.rows[0];
+}
+
+async function setPollState(checkpoint, backfilled) {
+  await db.query(`
+    UPDATE poll_state
+    SET checkpoint = $1, last_poll = NOW(), backfilled = $2
+    WHERE id = 1
+  `, [checkpoint, backfilled]);
+}
 
 // ─────────────────────────────────────────────
 // TOKEN MANAGER
 // ─────────────────────────────────────────────
-let tokenStore = { accessToken:null, refreshToken:null, expiresAt:0, refreshExpiresAt:0 };
+let tokenStore = { accessToken: null, refreshToken: null, expiresAt: 0, refreshExpiresAt: 0 };
 
 async function getAccessToken() {
-  const now = Date.now()/1000;
+  const now = Date.now() / 1000;
   if (tokenStore.accessToken && now < tokenStore.expiresAt - 30) return tokenStore.accessToken;
   if (tokenStore.refreshToken && now < tokenStore.refreshExpiresAt - 30) {
     try { await doRefresh(); return tokenStore.accessToken; } catch(e) { console.warn('[auth] refresh failed, re-login'); }
@@ -53,17 +131,17 @@ async function doLogin() {
 async function doRefresh() {
   const body = new URLSearchParams({ grant_type:'refresh_token', client_id:CLIENT_ID, refresh_token:tokenStore.refreshToken });
   const res  = await fetch(AUTH_URL, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-  if (!res.ok) throw new Error(`Refresh failed (${res.status})`);
+  if (!res.ok) throw new Error(`Refresh (${res.status})`);
   storeTokens(await res.json());
 }
 
-function storeTokens(data) {
-  const now = Date.now()/1000;
-  tokenStore.accessToken      = data.access_token;
-  tokenStore.refreshToken     = data.refresh_token;
-  tokenStore.expiresAt        = now + (data.expires_in || 300);
-  tokenStore.refreshExpiresAt = now + (data.refresh_expires_in || 1800);
-  console.log(`[auth] Token valid ${data.expires_in}s, refresh ${data.refresh_expires_in}s`);
+function storeTokens(d) {
+  const now = Date.now() / 1000;
+  tokenStore.accessToken      = d.access_token;
+  tokenStore.refreshToken     = d.refresh_token;
+  tokenStore.expiresAt        = now + (d.expires_in       || 300);
+  tokenStore.refreshExpiresAt = now + (d.refresh_expires_in || 1800);
+  console.log(`[auth] Token valid ${d.expires_in}s, refresh ${d.refresh_expires_in}s`);
 }
 
 // ─────────────────────────────────────────────
@@ -74,7 +152,7 @@ async function clsPost(path, body) {
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60000);
   try {
-    console.log(`[api] POST ${path}`, JSON.stringify(body).slice(0,120));
+    console.log(`[api] POST ${path}`, JSON.stringify(body).slice(0, 100));
     const res  = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${token}`, 'User-Agent':'AudubonBirdTracker/1.0' },
@@ -85,9 +163,9 @@ async function clsPost(path, body) {
     let data;
     try { data = await res.json(); } catch(e) {
       const txt = await res.text().catch(() => '');
-      throw Object.assign(new Error(`HTTP ${res.status}: ${txt.slice(0,200)}`), { status: res.status });
+      throw Object.assign(new Error(`HTTP ${res.status}: ${txt.slice(0, 300)}`), { status: res.status });
     }
-    console.log(`[api] → ${res.status}, items: ${data?.contents?.length ?? JSON.stringify(data).slice(0,80)}`);
+    console.log(`[api] → ${res.status}, items: ${data?.contents?.length ?? JSON.stringify(data).slice(0, 80)}`);
     if (!res.ok) throw Object.assign(new Error(data.title || 'API error'), { status: res.status, data });
     return data;
   } catch(e) {
@@ -97,285 +175,262 @@ async function clsPost(path, body) {
   }
 }
 
-function parsePoints(contents) {
+function toRows(contents, deviceRef) {
   return (contents || [])
     .filter(m => m.dopplerLocLat && m.dopplerLocLon)
     .map(m => ({
-      lat:  m.dopplerLocLat,
-      lon:  m.dopplerLocLon,
-      alt:  m.dopplerLocAlt,
-      err:  m.dopplerLocErrorRadius,
-      cls:  m.dopplerLocClass,
-      msgs: m.dopplerNbMsg,
-      dt:   m.msgDatetime || m.dopplerDatetime,
-      sat:  m.kineisMetadata?.sat,
-    }))
-    .sort((a, b) => a.dt.localeCompare(b.dt));
+      device_uid:  m.deviceUid,
+      device_ref:  m.deviceRef || deviceRef || String(m.deviceUid),
+      detected_at: m.msgDatetime || m.dopplerDatetime,
+      lat:         m.dopplerLocLat,
+      lon:         m.dopplerLocLon,
+      alt:         m.dopplerLocAlt      ?? null,
+      error_m:     m.dopplerLocErrorRadius ?? null,
+      loc_class:   m.dopplerLocClass    ?? null,
+      satellite:   m.kineisMetadata?.sat ?? null,
+    }));
 }
 
 // ─────────────────────────────────────────────
-// CACHE MANAGER
-// ─────────────────────────────────────────────
-// Cache structure:
-// {
-//   lastUpdated: ISO string,
-//   checkpoint: number (for realtime polling),
-//   devices: { [deviceUid]: { deviceRef, points: [...] } }
-// }
-
-function loadCache() {
-  try {
-    if (fs.existsSync(CACHE_FILE)) {
-      const raw  = fs.readFileSync(CACHE_FILE, 'utf8');
-      const data = JSON.parse(raw);
-      const pts  = Object.values(data.devices || {}).reduce((s, d) => s + (d.points?.length || 0), 0);
-      console.log(`[cache] Loaded from disk: ${pts} total points, last updated ${data.lastUpdated}`);
-      return data;
-    }
-  } catch(e) {
-    console.warn('[cache] Could not read cache file:', e.message);
-  }
-  return { lastUpdated: null, checkpoint: 0, devices: {} };
-}
-
-function saveCache(cache) {
-  try {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
-    const pts = Object.values(cache.devices).reduce((s, d) => s + (d.points?.length || 0), 0);
-    console.log(`[cache] Saved to disk: ${pts} total points`);
-  } catch(e) {
-    console.error('[cache] Could not save cache:', e.message);
-  }
-}
-
-let cache = loadCache();
-
-// Merge new points into existing cache for a device (deduplicate by dt+lat+lon)
-function mergePoints(existing, incoming) {
-  const seen = new Set(existing.map(p => p.dt + '|' + p.lat + '|' + p.lon));
-  const newPts = incoming.filter(p => !seen.has(p.dt + '|' + p.lat + '|' + p.lon));
-  if (newPts.length > 0) {
-    console.log(`[cache] +${newPts.length} new points`);
-  }
-  return [...existing, ...newPts].sort((a, b) => a.dt.localeCompare(b.dt));
-}
-
-// ─────────────────────────────────────────────
-// BACKFILL — full history via retrieve-bulk
-// Called once on startup if cache is empty
+// BACKFILL — full history, runs once on first deploy
 // ─────────────────────────────────────────────
 async function runBackfill(devices) {
-  console.log(`\n[backfill] Starting full history backfill for ${devices.length} devices…`);
+  console.log(`\n[backfill] Starting full history for ${devices.length} devices from ${BACKFILL_FROM}…`);
   const to = new Date().toISOString();
+  let totalInserted = 0;
 
   for (const dev of devices) {
-    try {
-      const data = await clsPost('/retrieve-bulk', {
-        pagination:      { first: 5000 },
-        retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
-        deviceUids:      [dev.deviceUid],
-        fromDatetime:    BACKFILL_FROM,
-        toDatetime:      to,
-        datetimeFormat:  'DATETIME',
-      });
-      const points = parsePoints(data.contents);
-      cache.devices[dev.deviceUid] = {
-        deviceRef: dev.deviceRef,
-        points,
-      };
-      console.log(`[backfill] ${dev.deviceRef}: ${points.length} points`);
-    } catch(e) {
-      console.error(`[backfill] ${dev.deviceRef} failed:`, e.message);
-      if (!cache.devices[dev.deviceUid]) {
-        cache.devices[dev.deviceUid] = { deviceRef: dev.deviceRef, points: [] };
+    let first = 0;
+    let pageNum = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      try {
+        const data = await clsPost('/retrieve-bulk', {
+          pagination:      { first: 5000, after: pageNum > 0 ? String(first - 1) : undefined },
+          retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
+          deviceUids:      [dev.deviceUid],
+          fromDatetime:    BACKFILL_FROM,
+          toDatetime:      to,
+          datetimeFormat:  'DATETIME',
+        });
+
+        const rows = toRows(data.contents, dev.deviceRef);
+        const inserted = await insertDetections(rows);
+        totalInserted += inserted;
+        console.log(`[backfill] ${dev.deviceRef} page ${pageNum}: ${rows.length} pts, ${inserted} new`);
+
+        hasMore = data.pageInfo?.hasNextPage && rows.length > 0;
+        if (hasMore) {
+          first += rows.length;
+          pageNum++;
+          await new Promise(r => setTimeout(r, 600));
+        }
+      } catch(e) {
+        console.error(`[backfill] ${dev.deviceRef} failed:`, e.message);
+        hasMore = false;
       }
     }
-    await new Promise(r => setTimeout(r, 800)); // be kind to the API
+    await new Promise(r => setTimeout(r, 800));
   }
 
-  cache.lastUpdated  = new Date().toISOString();
-  cache.checkpoint   = 0; // will be set on first realtime call
-  saveCache(cache);
-  console.log('[backfill] Complete.\n');
+  await setPollState(0, true);
+  console.log(`[backfill] Complete — ${totalInserted} new rows inserted.\n`);
 }
 
 // ─────────────────────────────────────────────
-// REALTIME POLL — incremental updates
-// Called every hour after backfill
+// REALTIME POLL — runs every 15 minutes
 // ─────────────────────────────────────────────
+let isPolling = false;
+
 async function runRealtimePoll() {
-  console.log(`\n[poll] Polling for new data (checkpoint: ${cache.checkpoint})…`);
+  if (isPolling) { console.log('[poll] Already running, skipping.'); return; }
+  isPolling = true;
+
+  const state = await getPollState();
+  console.log(`\n[poll] Polling realtime (checkpoint: ${state.checkpoint})…`);
+
   try {
     const data = await clsPost('/retrieve-realtime', {
-      checkpoint:      cache.checkpoint,
+      checkpoint:      state.checkpoint,
       retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
       datetimeFormat:  'DATETIME',
     });
 
-    // Update checkpoint for next poll
-    if (data.checkpoint != null) {
-      cache.checkpoint = data.checkpoint;
-    }
+    const newCheckpoint = data.checkpoint ?? state.checkpoint;
+    const rows     = toRows(data.contents);
+    const inserted = await insertDetections(rows);
 
-    // Merge new points per device
-    const newPoints = parsePoints(data.contents);
-    if (newPoints.length === 0) {
-      console.log('[poll] No new points.');
-    } else {
-      // Group by deviceUid
-      const byDevice = {};
-      for (const p of (data.contents || [])) {
-        if (!p.dopplerLocLat || !p.dopplerLocLon) continue;
-        const uid = p.deviceUid;
-        if (!byDevice[uid]) byDevice[uid] = [];
-        byDevice[uid].push({
-          lat: p.dopplerLocLat, lon: p.dopplerLocLon, alt: p.dopplerLocAlt,
-          err: p.dopplerLocErrorRadius, cls: p.dopplerLocClass, msgs: p.dopplerNbMsg,
-          dt:  p.msgDatetime || p.dopplerDatetime, sat: p.kineisMetadata?.sat,
-        });
-      }
+    await setPollState(newCheckpoint, true);
 
-      let totalNew = 0;
-      for (const [uid, pts] of Object.entries(byDevice)) {
-        if (!cache.devices[uid]) cache.devices[uid] = { deviceRef: String(uid), points: [] };
-        const before = cache.devices[uid].points.length;
-        cache.devices[uid].points = mergePoints(cache.devices[uid].points, pts);
-        totalNew += cache.devices[uid].points.length - before;
-      }
-      console.log(`[poll] Added ${totalNew} new points across ${Object.keys(byDevice).length} devices`);
-    }
-
-    cache.lastUpdated = new Date().toISOString();
-    saveCache(cache);
+    const total = await db.query('SELECT COUNT(*) FROM detections');
+    console.log(`[poll] +${inserted} new rows | total in DB: ${total.rows[0].count} | next checkpoint: ${newCheckpoint}`);
   } catch(e) {
     console.error('[poll] Failed:', e.message);
-    // If checkpoint too old (>6h), reset it
-    if (e.message?.includes('429') || e.message?.includes('checkpoint')) {
+    if (e.message?.includes('429') || e.message?.toLowerCase().includes('checkpoint')) {
       console.warn('[poll] Resetting checkpoint to 0');
-      cache.checkpoint = 0;
+      await setPollState(0, true);
     }
+  } finally {
+    isPolling = false;
+    console.log(`[poll] Done. Next poll in ${POLL_INTERVAL / 60000} minutes.\n`);
   }
-  console.log(`[poll] Done. Next poll in ${POLL_INTERVAL/60000} minutes.\n`);
 }
 
 // ─────────────────────────────────────────────
 // STARTUP SEQUENCE
 // ─────────────────────────────────────────────
 async function startup() {
-  // 1. Auth
+  await initDB();
   await getAccessToken();
   console.log('✅ Auth OK');
 
-  // 2. Get device list
+  // Get device list
   let devices;
   try {
     const devData = await clsPost('/retrieve-device-list', {});
     devices = devData.contents || [];
     console.log(`[startup] ${devices.length} devices found`);
   } catch(e) {
-    console.error('[startup] Could not fetch device list:', e.message);
+    console.error('[startup] Device list failed:', e.message);
     return;
   }
 
-  // 3. Backfill if cache is empty or very old
-  const cacheIsEmpty = Object.keys(cache.devices).length === 0;
-  const cacheAge = cache.lastUpdated
-    ? (Date.now() - new Date(cache.lastUpdated).getTime()) / 3600000
-    : Infinity;
+  const state = await getPollState();
 
-  if (cacheIsEmpty) {
-    console.log('[startup] Cache empty — running full backfill…');
-    await runBackfill(devices);
+  if (!state.backfilled) {
+    console.log('[startup] First run — starting backfill…');
+    runBackfill(devices).catch(e => console.error('[backfill error]', e.message));
   } else {
-    console.log(`[startup] Cache exists (${cacheAge.toFixed(1)}h old) — skipping backfill`);
-    // Run a quick realtime poll to catch up on missed time
+    console.log('[startup] DB already populated — running realtime poll…');
     await runRealtimePoll();
   }
 
-  // 4. Schedule hourly realtime polls
+  // Schedule 15-minute polls
   setInterval(runRealtimePoll, POLL_INTERVAL);
-  console.log(`[startup] Polling scheduled every ${POLL_INTERVAL/60000} minutes`);
+  console.log(`[startup] Polling every ${POLL_INTERVAL / 60000} minutes\n`);
 }
 
 // ─────────────────────────────────────────────
-// ROUTES
+// API ROUTES
 // ─────────────────────────────────────────────
-app.get('/health', (req, res) => {
-  const now = Date.now()/1000;
-  const totalPoints = Object.values(cache.devices)
-    .reduce((s, d) => s + (d.points?.length || 0), 0);
-  res.json({
-    status:         'ok',
-    tokenValid:     now < tokenStore.expiresAt,
-    tokenExpiresIn: Math.round(tokenStore.expiresAt - now),
-    cacheLastUpdated: cache.lastUpdated,
-    cacheAgeMinutes: cache.lastUpdated
-      ? Math.round((Date.now() - new Date(cache.lastUpdated).getTime()) / 60000)
-      : null,
-    totalCachedPoints: totalPoints,
-    checkpoint:     cache.checkpoint,
-    user:           USERNAME,
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const state     = await getPollState();
+    const countRes  = await db.query('SELECT COUNT(*) FROM detections');
+    const devRes    = await db.query('SELECT device_uid, device_ref, COUNT(*) as pts, MAX(detected_at) as last_seen FROM detections GROUP BY device_uid, device_ref ORDER BY device_uid');
+    const now       = Date.now() / 1000;
+
+    res.json({
+      status:            'ok',
+      tokenValid:        now < tokenStore.expiresAt,
+      tokenExpiresIn:    Math.round(tokenStore.expiresAt - now),
+      lastPoll:          state.last_poll,
+      pollAgeMinutes:    state.last_poll ? Math.round((Date.now() - new Date(state.last_poll).getTime()) / 60000) : null,
+      backfilled:        state.backfilled,
+      checkpoint:        state.checkpoint,
+      totalDetections:   parseInt(countRes.rows[0].count),
+      devices:           devRes.rows,
+    });
+  } catch(e) {
+    res.status(500).json({ status: 'error', error: e.message });
+  }
 });
 
-// Main track endpoint — served from cache
-app.get('/api/tracks', (req, res) => {
+// Main tracks endpoint — fast SQL query with optional date filtering
+app.get('/api/tracks', async (req, res) => {
   const { from, to } = req.query;
 
-  const result = Object.entries(cache.devices).map(([uid, dev]) => {
-    let pts = dev.points || [];
+  try {
+    let query = `
+      SELECT
+        device_uid, device_ref,
+        detected_at AT TIME ZONE 'UTC' AS dt,
+        lat, lon, alt, error_m AS err, loc_class AS cls, satellite AS sat
+      FROM detections
+      WHERE 1=1
+    `;
+    const params = [];
 
-    // Filter by date range if provided
-    if (from) pts = pts.filter(p => p.dt >= from);
-    if (to)   pts = pts.filter(p => p.dt <= to);
+    if (from) { params.push(from); query += ` AND detected_at >= $${params.length}`; }
+    if (to)   { params.push(to);   query += ` AND detected_at <= $${params.length}`; }
 
-    return { deviceUid: Number(uid), deviceRef: dev.deviceRef, points: pts };
-  });
+    query += ' ORDER BY device_uid, detected_at ASC';
 
-  res.json({
-    devices:      result,
-    fromCache:    true,
-    lastUpdated:  cache.lastUpdated,
-    cacheAgeMinutes: cache.lastUpdated
-      ? Math.round((Date.now() - new Date(cache.lastUpdated).getTime()) / 60000)
-      : null,
-  });
+    const result = await db.query(query, params);
+
+    // Group by device
+    const byDevice = {};
+    for (const row of result.rows) {
+      const uid = String(row.device_uid);
+      if (!byDevice[uid]) byDevice[uid] = { deviceUid: row.device_uid, deviceRef: row.device_ref, points: [] };
+      byDevice[uid].points.push({
+        lat: parseFloat(row.lat),
+        lon: parseFloat(row.lon),
+        alt: row.alt ? parseFloat(row.alt) : null,
+        err: row.err ? parseFloat(row.err) : null,
+        cls: row.cls,
+        sat: row.sat,
+        dt:  row.dt instanceof Date ? row.dt.toISOString().replace('Z','') : row.dt,
+      });
+    }
+
+    const state = await getPollState();
+    res.json({
+      devices:        Object.values(byDevice),
+      fromDB:         true,
+      lastPoll:       state.last_poll,
+      pollAgeMinutes: state.last_poll ? Math.round((Date.now() - new Date(state.last_poll).getTime()) / 60000) : null,
+    });
+  } catch(e) {
+    console.error('[/api/tracks]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// Single device track from cache
-app.get('/api/track/:deviceUid', (req, res) => {
-  const uid = Number(req.params.deviceUid);
+// Per-device track
+app.get('/api/track/:deviceUid', async (req, res) => {
   const { from, to } = req.query;
-  const dev = cache.devices[uid];
-  if (!dev) return res.status(404).json({ error: 'Device not found in cache' });
+  const params = [req.params.deviceUid];
+  let query = `
+    SELECT detected_at AT TIME ZONE 'UTC' AS dt, lat, lon, alt, error_m AS err, loc_class AS cls, satellite AS sat
+    FROM detections WHERE device_uid = $1
+  `;
+  if (from) { params.push(from); query += ` AND detected_at >= $${params.length}`; }
+  if (to)   { params.push(to);   query += ` AND detected_at <= $${params.length}`; }
+  query += ' ORDER BY detected_at ASC';
 
-  let pts = dev.points || [];
-  if (from) pts = pts.filter(p => p.dt >= from);
-  if (to)   pts = pts.filter(p => p.dt <= to);
-
-  res.json({ deviceUid: uid, deviceRef: dev.deviceRef, points: pts, fromCache: true });
+  try {
+    const result = await db.query(query, params);
+    res.json({ deviceUid: req.params.deviceUid, points: result.rows });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// Force a manual cache refresh (admin use)
+// Force immediate poll
 app.post('/api/refresh', async (req, res) => {
-  res.json({ message: 'Refresh triggered in background' });
-  try { await runRealtimePoll(); } catch(e) { console.error('[refresh]', e.message); }
+  res.json({ message: 'Poll triggered' });
+  runRealtimePoll().catch(e => console.error('[manual refresh]', e.message));
 });
 
-// Cache status
-app.get('/api/cache-status', (req, res) => {
-  const summary = Object.entries(cache.devices).map(([uid, dev]) => ({
-    deviceUid:   Number(uid),
-    deviceRef:   dev.deviceRef,
-    pointCount:  dev.points?.length || 0,
-    firstPoint:  dev.points?.[0]?.dt || null,
-    lastPoint:   dev.points?.[dev.points.length-1]?.dt || null,
-  }));
-  res.json({
-    lastUpdated:  cache.lastUpdated,
-    checkpoint:   cache.checkpoint,
-    devices:      summary,
-  });
+// DB stats
+app.get('/api/db-status', async (req, res) => {
+  try {
+    const rows = await db.query(`
+      SELECT device_uid, device_ref,
+        COUNT(*)                    AS total_points,
+        MIN(detected_at)            AS first_detection,
+        MAX(detected_at)            AS last_detection
+      FROM detections
+      GROUP BY device_uid, device_ref
+      ORDER BY device_uid
+    `);
+    const state = await getPollState();
+    res.json({ devices: rows.rows, pollState: state });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─────────────────────────────────────────────
@@ -383,16 +438,19 @@ app.get('/api/cache-status', (req, res) => {
 // ─────────────────────────────────────────────
 console.log(`[env] CLS_USERNAME: ${USERNAME || 'NOT SET'}`);
 console.log(`[env] CLS_PASSWORD: ${PASSWORD ? '***set***' : 'NOT SET'}`);
+console.log(`[env] DATABASE_URL: ${process.env.DATABASE_URL ? '***set***' : 'NOT SET'}`);
 
 if (!USERNAME || !PASSWORD) {
-  console.error('❌  Missing CLS_USERNAME or CLS_PASSWORD — set them in Railway Variables tab');
+  console.error('❌  Missing CLS_USERNAME or CLS_PASSWORD');
+  process.exit(1);
+}
+if (!process.env.DATABASE_URL) {
+  console.error('❌  Missing DATABASE_URL — add PostgreSQL plugin in Railway');
   process.exit(1);
 }
 
 app.listen(PORT, async () => {
-  console.log(`\n🐦  Bird Tracker backend running on PORT ${PORT}`);
-  console.log(`    process.env.PORT = ${process.env.PORT}`);
-  console.log(`    Open: /audubon-bird-tracker.html\n`);
+  console.log(`\n🐦  Bird Tracker backend on PORT ${PORT}\n`);
   try { await startup(); }
-  catch(e) { console.error('❌  Startup failed:', e.message); }
+  catch(e) { console.error('❌  Startup error:', e.message); }
 });

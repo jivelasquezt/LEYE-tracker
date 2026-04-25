@@ -587,8 +587,9 @@ async function checkBackend(){
     const dot=document.getElementById('statusDot'),txt=document.getElementById('statusText');
     if(d.status==='ok'&&d.tokenValid){
       dot.className='sdot ok';
-      const age=d.cacheAgeMinutes!=null?` · cache ${d.cacheAgeMinutes<60?d.cacheAgeMinutes+'m':(d.cacheAgeMinutes/60).toFixed(1)+'h'} old`:'';
-      txt.textContent=`Live${age} · ${d.totalCachedPoints??0} pts`;
+      const age=d.pollAgeMinutes!=null?` · polled ${d.pollAgeMinutes<60?d.pollAgeMinutes+'m':(d.pollAgeMinutes/60).toFixed(1)+'h'} ago`:'';
+      const pts=d.totalDetections??0;
+      txt.textContent=`Live${age} · ${pts.toLocaleString()} pts`;
     } else{dot.className='sdot warn';txt.textContent='Refreshing…';}
   }catch(e){document.getElementById('statusDot').className='sdot err';document.getElementById('statusText').textContent='Backend offline';}
 }
@@ -596,8 +597,11 @@ async function checkBackend(){
 function fmtDate(dt){return new Date(dt+(dt.endsWith('Z')?'':'Z')).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
 function fmtDateTime(dt){
   const d=new Date(dt+(dt.endsWith('Z')?'':'Z'));
-  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+
+  const utc=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+
     d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false})+' UTC';
+  const local=d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
+  const tz=Intl.DateTimeFormat().resolvedOptions().timeZone.split('/').pop().replace('_',' ');
+  return utc+' / '+local+' '+tz;
 }
 function setLoading(v,msg=''){document.getElementById('loadingOverlay').classList.toggle('visible',v);if(msg)document.getElementById('loadingText').textContent=msg;}
 let _tt;
