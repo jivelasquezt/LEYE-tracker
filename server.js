@@ -267,7 +267,7 @@ async function runRealtimePoll() {
 
   try {
     const data = await clsPost('/retrieve-realtime', {
-      checkpoint:      state.checkpoint,
+      checkpoint:      parseInt(state.checkpoint) || 0,
       pagination:      { first: 5000 },
       retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
       datetimeFormat:  'DATETIME',
@@ -277,7 +277,7 @@ async function runRealtimePoll() {
     console.log('[poll] API response keys:', Object.keys(data));
     console.log('[poll] checkpoint from API:', data.checkpoint, '| current:', state.checkpoint);
 
-    const newCheckpoint = data.checkpoint != null ? data.checkpoint : state.checkpoint;
+    const newCheckpoint = data.checkpoint != null ? parseInt(data.checkpoint) : (parseInt(state.checkpoint) || 0);
     const rows     = toRows(data.contents);
     const inserted = await insertDetections(rows);
 
