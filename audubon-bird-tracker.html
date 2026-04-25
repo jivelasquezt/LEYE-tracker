@@ -325,6 +325,8 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
 <script>
 const API_BASE = window.location.hostname==='localhost'||window.location.hostname==='127.0.0.1'
   ? 'http://localhost:3001' : window.location.origin;
+const API_KEY = 'UQ2PKSZOy0I71RwsVPgFjdd38Tk-7cCIpNFZDYli80o';
+const apiFetch = (url) => fetch(url, {'headers': {'x-api-key': API_KEY}});
 
 const BIRDS = [
   {deviceUid:101392,deviceRef:'40801',name:'Cholao 1',color:'#60a5fa'},
@@ -361,7 +363,7 @@ const isMobile = () => window.innerWidth <= 768;
 async function autoLoadFromCache(){
   try{
     // Load all time (no date filter) from cache
-    const res=await fetch(`${API_BASE}/api/tracks`);
+    const res=await apiFetch(`${API_BASE}/api/tracks`);
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Failed');
 
@@ -572,7 +574,7 @@ async function loadAllBirds(){
   setLoading(true,'Fetching tracks…');
   document.getElementById('btnLoad').classList.add('loading');
   try{
-    const res=await fetch(`${API_BASE}/api/tracks?from=${from}&to=${to}`);
+    const res=await apiFetch(`${API_BASE}/api/tracks?from=${from}&to=${to}`);
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Load failed');
     let loaded=0;

@@ -9,6 +9,20 @@ app.use(cors({ origin: (o, cb) => cb(null, true) }));
 app.use(express.json());
 app.use(express.static(__dirname));
 
+// ─────────────────────────────────────────────
+// API KEY PROTECTION
+// ─────────────────────────────────────────────
+const API_KEY = process.env.API_KEY;
+
+app.use('/api', (req, res, next) => {
+  if (!API_KEY) return next(); // dev mode: no key required
+  const provided = req.headers['x-api-key'] || req.query.apiKey;
+  if (provided !== API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+});
+
 // Serve tracker at root URL — better for social sharing
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/audubon-bird-tracker.html');
