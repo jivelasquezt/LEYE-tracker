@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ override: false }); // Railway vars take priority over .env
 const express  = require('express');
 const cors     = require('cors');
 const { Pool } = require('pg');
