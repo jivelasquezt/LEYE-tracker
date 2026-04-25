@@ -282,6 +282,7 @@ let isPolling = false;
 async function runRealtimePoll() {
   if (isPolling) { console.log('[poll] Already running, skipping.'); return; }
   isPolling = true;
+  console.log('[poll] Starting poll...');
 
   const state = await getPollState();
   console.log(`\n[poll] Polling realtime (checkpoint: ${state.checkpoint})…`);
@@ -496,5 +497,8 @@ if (!hasPgConfig) {
 app.listen(PORT, async () => {
   console.log(`\n🐦  Bird Tracker backend on PORT ${PORT}\n`);
   try { await startup(); }
-  catch(e) { console.error('❌  Startup error:', e.message); }
+  catch(e) {
+    console.error('❌  Startup error:', e.message);
+    // Don't crash — keep serving cached data even if startup poll fails
+  }
 });
