@@ -68,6 +68,11 @@ console.log('[db] Host:', dbConfig.host || '(from connection string)');
 
 const db = new Pool(dbConfig);
 
+// Prevent pool errors from crashing the process
+db.on('error', (err) => {
+  console.error('[db] Pool error (non-fatal):', err.message);
+});
+
 async function initDB() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS detections (
