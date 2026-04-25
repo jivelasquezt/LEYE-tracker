@@ -319,6 +319,7 @@ const BIRDS = [
 ];
 
 let allBirdData={}, birdLocation={}, activeBird=null;
+let _lastKnownTotal=0;
 
 function getFilteredPoints(deviceUid){
   const pts=allBirdData[deviceUid]||[];
@@ -399,7 +400,8 @@ function init(){
   window.addEventListener('resize',()=>map.invalidateSize());
 
   checkBackend();
-  setInterval(checkBackend,30000);
+  setInterval(checkBackend, 60000);       // check backend status every 60s
+  setInterval(autoLoadFromCache, 15*60*1000); // force data reload every 15min
   renderSidebar();
   // Auto-load from cache immediately — no button press needed
   autoLoadFromCache();
@@ -585,12 +587,23 @@ async function checkBackend(){
   try{
     const d=await(await fetch(`${API_BASE}/health`)).json();
     const dot=document.getElementById('statusDot'),txt=document.getElementById('statusText');
-    if(d.status==='ok'&&d.tokenValid){
-      dot.className='sdot ok';
+    if(d.status==='ok'){
       const age=d.pollAgeMinutes!=null?` · polled ${d.pollAgeMinutes<60?d.pollAgeMinutes+'m':(d.pollAgeMinutes/60).toFixed(1)+'h'} ago`:'';
       const pts=d.totalDetections??0;
-      txt.textContent=`Live${age} · ${pts.toLocaleString()} pts`;
-    } else{dot.className='sdot warn';txt.textContent='Refreshing…';}
+      if(!d.tokenValid){
+        dot.className='sdot warn';
+        txt.textContent=`Token refreshing…${age}`;
+      } else {
+        dot.className='sdot ok';
+        txt.textContent=`Live${age} · ${pts.toLocaleString()} pts`;
+      }
+      // Auto-reload frontend data if backend has newer data
+      if(d.totalDetections && d.totalDetections > _lastKnownTotal){
+        _lastKnownTotal = d.totalDetections;
+        console.log('[auto-refresh] Backend has new data, reloading…');
+        autoLoadFromCache();
+      }
+    } else{dot.className='sdot err';txt.textContent='Backend offline';}
   }catch(e){document.getElementById('statusDot').className='sdot err';document.getElementById('statusText').textContent='Backend offline';}
 }
 
