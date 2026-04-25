@@ -9,6 +9,11 @@ app.use(cors({ origin: (o, cb) => cb(null, true) }));
 app.use(express.json());
 app.use(express.static(__dirname));
 
+// Serve tracker at root URL — better for social sharing
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/audubon-bird-tracker.html');
+});
+
 // Allow social media crawlers to access OG image and HTML
 app.use((req, res, next) => {
   res.setHeader('X-Robots-Tag', 'index, follow');
