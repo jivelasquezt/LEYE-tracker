@@ -47,7 +47,7 @@ body{font-family:'Inter',sans-serif;font-size:14px;color:var(--text);height:100d
 
 /* NAV */
 nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;z-index:1000;box-shadow:var(--shadow-sm);}
-.nav-logo{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.nav-logo{display:flex;align-items:center;gap:10px;flex-shrink:0;min-width:0;overflow:hidden;}
 .audubon-logo{height:30px;width:auto;display:block;}
 .bird-thumb{width:32px;height:32px;border-radius:50%;object-fit:cover;object-position:center 20%;border:1.5px solid var(--border);flex-shrink:0;}
 .nav-sep{width:1px;height:26px;background:var(--border);flex-shrink:0;}
@@ -56,7 +56,7 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
 .nav-subtitle{font-size:10px;color:var(--muted);font-style:italic;white-space:nowrap;}
 .nav-controls{display:flex;align-items:center;gap:8px;margin-left:auto;}
 .date-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;}
-.date-in{border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-family:'Inter',sans-serif;font-size:12px;color:var(--text);background:var(--off-white);outline:none;}
+.date-in{border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-family:'Inter',sans-serif;font-size:12px;color:var(--text);background:var(--off-white);outline:none;min-width:0;}
 .date-in:focus{border-color:var(--blue);background:var(--white);}
 .btn-load{background:var(--orange);color:var(--white);border:none;border-radius:20px;padding:7px 16px;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s;}
 .btn-load:hover{background:var(--orange-dk);}
@@ -152,7 +152,7 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
    MOBILE  — full map-first experience
    ═══════════════════════════════════════ */
 @media(max-width:768px){
-  body{overflow:hidden;height:100dvh;}
+  body{overflow:hidden;height:100dvh;height:100vh;display:flex;flex-direction:column;}
 
   /* Compact nav: two rows */
   nav{flex-wrap:wrap;height:auto;padding:8px 12px;gap:6px;}
@@ -166,15 +166,17 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
   .nav-status{display:none;}
 
   /* Main stacks vertically */
-  .main{flex-direction:column;overflow:hidden;}
+  .main{flex-direction:column;overflow:hidden;flex:1;min-height:0;}
 
   /* ── BIRD LIST — horizontal strip, always visible ── */
   .sidebar{
     width:100%;
     height:auto;
+    max-height:45vh;
     flex-shrink:0;
     border-right:none;
     border-bottom:1px solid var(--border);
+    overflow:hidden;
   }
   .sidebar-top{padding:10px 12px 8px;}
   .s-heading{font-size:14px;}
@@ -197,12 +199,14 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
   /* ── MAP — fills remaining space ── */
   .map-wrap{
     flex:1;
-    min-height:0;
+    min-height:200px;
     position:relative;
+    overflow:hidden;
   }
   #map{
     position:absolute;
     inset:0;
+    width:100%!important;
     height:100%!important;
   }
 
@@ -381,6 +385,7 @@ async function autoLoadFromCache(){
       const first=BIRDS.find(b=>getFilteredPoints(b.deviceUid).length>0)
         || BIRDS.find(b=>(allBirdData[b.deviceUid]||[]).length>0);
       if(first) selectBird(first);
+      else { setTimeout(()=>map.invalidateSize(),100); }
       geocodeAll();
     }
   }catch(e){
@@ -414,8 +419,17 @@ function init(){
   markerLayer=L.layerGroup().addTo(map);
 
   // Fix map size after layout settles
-  setTimeout(()=>map.invalidateSize(),200);
-  window.addEventListener('resize',()=>map.invalidateSize());
+  // Invalidate map size multiple times to handle dynamic layout changes
+  [100, 300, 600, 1000].forEach(t => setTimeout(() => map.invalidateSize(), t));
+  window.addEventListener('resize', () => {
+    map.invalidateSize();
+    // Recalculate layout on orientation change
+    if(isMobile()) document.getElementById('statsPanel').classList.remove('expanded');
+  });
+  // Handle orientation change on mobile
+  window.addEventListener('orientationchange', () => {
+    setTimeout(() => map.invalidateSize(), 300);
+  });
 
   checkBackend();
   setInterval(checkBackend, 60000);       // check backend status every 60s
@@ -429,10 +443,10 @@ function init(){
 function handleStatsTap(e){
   if(!isMobile()) return;
   const panel=document.getElementById('statsPanel');
-  // Only toggle on handle area (top 44px)
   const rect=panel.getBoundingClientRect();
-  if(e.clientY-rect.top<44){
+  if(e.clientY-rect.top<50){
     panel.classList.toggle('expanded');
+    setTimeout(()=>map.invalidateSize(), 350);
   }
 }
 
@@ -509,7 +523,8 @@ function selectBird(bird){
   drawTrack(bird);
   renderStats(bird);
   expandStats();
-  map.invalidateSize();
+  setTimeout(()=>map.invalidateSize(), 50);
+  setTimeout(()=>map.invalidateSize(), 350); // after stats animation
 }
 
 /* DRAW TRACK */
