@@ -27,12 +27,25 @@ const BACKFILL_FROM = '2025-01-01T00:00:00.000Z';
 // ─────────────────────────────────────────────
 // DATABASE
 // ─────────────────────────────────────────────
-const db = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes('railway')
-    ? { rejectUnauthorized: false }
-    : false,
-});
+// Support both DATABASE_URL and individual PG* variables (Railway Postgres plugin)
+const dbConfig = process.env.DATABASE_URL
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    }
+  : {
+      host:     process.env.PGHOST,
+      port:     parseInt(process.env.PGPORT) || 5432,
+      database: process.env.PGDATABASE,
+      user:     process.env.PGUSER,
+      password: process.env.PGPASSWORD,
+      ssl:      { rejectUnauthorized: false },
+    };
+
+console.log('[db] Connecting via:', process.env.DATABASE_URL ? 'DATABASE_URL' : 'PG* variables');
+console.log('[db] Host:', dbConfig.host || '(from connection string)');
+
+const db = new Pool(dbConfig);
 
 async function initDB() {
   await db.query(`
@@ -69,26 +82,28 @@ async function initDB() {
 
 async function insertDetections(rows) {
   if (!rows.length) return 0;
-  // Batch upsert — ON CONFLICT DO NOTHING deduplicates automatically
-  const values = rows.map((r, i) => {
-    const base = i * 9;
-    return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},$${base+9})`;
-  }).join(',');
-
-  const params = rows.flatMap(r => [
-    r.device_uid, r.device_ref, r.detected_at,
-    r.lat, r.lon, r.alt, r.error_m, r.loc_class, r.satellite,
-  ]);
-
-  const res = await db.query(`
-    INSERT INTO detections
-      (device_uid, device_ref, detected_at, lat, lon, alt, error_m, loc_class, satellite)
-    VALUES ${values}
-    ON CONFLICT (device_uid, detected_at) DO NOTHING
-    RETURNING device_uid
-  `, params);
-
-  return res.rowCount;
+  // Batch in chunks of 500 rows to stay under PostgreSQL's 65,535 param limit
+  const CHUNK = 500;
+  let totalInserted = 0;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const values = chunk.map((r, j) => {
+      const base = j * 9;
+      return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},$${base+9})`;
+    }).join(',');
+    const params = chunk.flatMap(r => [
+      r.device_uid, r.device_ref, r.detected_at,
+      r.lat, r.lon, r.alt, r.error_m, r.loc_class, r.satellite,
+    ]);
+    const res = await db.query(`
+      INSERT INTO detections
+        (device_uid, device_ref, detected_at, lat, lon, alt, error_m, loc_class, satellite)
+      VALUES ${values}
+      ON CONFLICT (device_uid, detected_at) DO NOTHING
+    `, params);
+    totalInserted += res.rowCount;
+  }
+  return totalInserted;
 }
 
 async function getPollState() {
@@ -253,20 +268,26 @@ async function runRealtimePoll() {
   try {
     const data = await clsPost('/retrieve-realtime', {
       checkpoint:      state.checkpoint,
+      pagination:      { first: 5000 },
       retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
       datetimeFormat:  'DATETIME',
     });
 
-    const newCheckpoint = data.checkpoint ?? state.checkpoint;
+    // Log what the API actually returned
+    console.log('[poll] API response keys:', Object.keys(data));
+    console.log('[poll] checkpoint from API:', data.checkpoint, '| current:', state.checkpoint);
+
+    const newCheckpoint = data.checkpoint != null ? data.checkpoint : state.checkpoint;
     const rows     = toRows(data.contents);
     const inserted = await insertDetections(rows);
 
     await setPollState(newCheckpoint, true);
 
     const total = await db.query('SELECT COUNT(*) FROM detections');
-    console.log(`[poll] +${inserted} new rows | total in DB: ${total.rows[0].count} | next checkpoint: ${newCheckpoint}`);
+    console.log(`[poll] +${inserted} new rows | total: ${total.rows[0].count} | checkpoint: ${state.checkpoint} → ${newCheckpoint}`);
   } catch(e) {
     console.error('[poll] Failed:', e.message);
+    if (e.data) console.error('[poll] API error detail:', JSON.stringify(e.data).slice(0,300));
     if (e.message?.includes('429') || e.message?.toLowerCase().includes('checkpoint')) {
       console.warn('[poll] Resetting checkpoint to 0');
       await setPollState(0, true);
@@ -444,8 +465,10 @@ if (!USERNAME || !PASSWORD) {
   console.error('❌  Missing CLS_USERNAME or CLS_PASSWORD');
   process.exit(1);
 }
-if (!process.env.DATABASE_URL) {
-  console.error('❌  Missing DATABASE_URL — add PostgreSQL plugin in Railway');
+const hasPgConfig = process.env.DATABASE_URL || (process.env.PGHOST && process.env.PGDATABASE);
+if (!hasPgConfig) {
+  console.error('❌  Missing database config — need DATABASE_URL or PGHOST+PGDATABASE');
+  console.error('    Available env vars:', Object.keys(process.env).filter(k => k.startsWith('PG') || k.includes('DATABASE')).join(', '));
   process.exit(1);
 }
 
