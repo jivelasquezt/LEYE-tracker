@@ -30,7 +30,11 @@ app.get('/preview.png', (req, res) => {
   res.sendFile(__dirname + '/preview.png');
 });
 
-process.on('unhandledRejection', r  => console.error('[crash] unhandledRejection:', r));
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[crash] unhandledRejection:', reason);
+  console.error('[crash] Stack:', reason?.stack || 'no stack');
+  // Don't exit — let Railway keep the process alive
+});
 process.on('uncaughtException',  e  => console.error('[crash] uncaughtException:', e.message));
 
 // ─────────────────────────────────────────────
@@ -348,15 +352,20 @@ async function startup() {
 
   if (!state.backfilled) {
     console.log('[startup] First run — starting backfill…');
-    runBackfill(devices).catch(e => console.error('[backfill error]', e.message));
+    // Run backfill in background, then start polling after it completes
+    runBackfill(devices)
+      .catch(e => console.error('[backfill error]', e.message))
+      .finally(() => {
+        setInterval(runRealtimePoll, POLL_INTERVAL);
+        console.log(`[startup] Polling every ${POLL_INTERVAL / 60000} minutes\n`);
+      });
   } else {
     console.log('[startup] DB already populated — running realtime poll…');
     await runRealtimePoll();
+    // Only schedule interval AFTER startup poll completes
+    setInterval(runRealtimePoll, POLL_INTERVAL);
+    console.log(`[startup] Polling every ${POLL_INTERVAL / 60000} minutes\n`);
   }
-
-  // Schedule 15-minute polls
-  setInterval(runRealtimePoll, POLL_INTERVAL);
-  console.log(`[startup] Polling every ${POLL_INTERVAL / 60000} minutes\n`);
 }
 
 // ─────────────────────────────────────────────
