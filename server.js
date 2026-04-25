@@ -267,7 +267,7 @@ async function runRealtimePoll() {
 
   try {
     const data = await clsPost('/retrieve-realtime', {
-      checkpoint:      parseInt(state.checkpoint) || 0,
+      fromCheckpoint:  parseInt(state.checkpoint) || 0,
       pagination:      { first: 5000 },
       retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
       datetimeFormat:  'DATETIME',
