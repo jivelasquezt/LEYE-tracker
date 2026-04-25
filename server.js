@@ -9,6 +9,22 @@ app.use(cors({ origin: (o, cb) => cb(null, true) }));
 app.use(express.json());
 app.use(express.static(__dirname));
 
+// Allow social media crawlers to access OG image and HTML
+app.use((req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'index, follow');
+  // Allow iframe embedding and social crawlers
+  res.removeHeader('X-Frame-Options');
+  next();
+});
+
+// Explicitly serve preview image with correct headers for Facebook/Twitter
+app.get('/preview.png', (req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.sendFile(__dirname + '/preview.png');
+});
+
 process.on('unhandledRejection', r  => console.error('[crash] unhandledRejection:', r));
 process.on('uncaughtException',  e  => console.error('[crash] uncaughtException:', e.message));
 
