@@ -330,10 +330,12 @@ async function runRealtimePoll() {
     return;
   }
 
-  // Look back 30 min to comfortably cover the 15-min interval plus any drift.
-  // ON CONFLICT DO NOTHING dedupes overlap with previous polls.
+  // Look back 7 days. Kineis/CLS sometimes ingests messages hours or
+  // even days late, so a tight window misses them permanently.
+  // ON CONFLICT DO NOTHING dedupes the overlap with previous polls.
+  const LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
   const to   = new Date().toISOString();
-  const from = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const from = new Date(Date.now() - LOOKBACK_MS).toISOString();
   console.log(`\n[poll] Polling ${cachedDevices.length} devices for window ${from} → ${to}`);
 
   let totalInserted = 0;
@@ -519,6 +521,61 @@ app.get('/api/track/:deviceUid', async (req, res) => {
 app.post('/api/refresh', async (req, res) => {
   res.json({ message: 'Poll triggered' });
   runRealtimePoll().catch(e => console.error('[manual refresh]', e.message));
+});
+
+// One-shot catch-up that pulls a wider window than the regular poll.
+// Use this to fill an existing gap. Default lookback: 30 days.
+//   POST /api/backfill-gap            -> last 30 days
+//   POST /api/backfill-gap?days=60    -> last 60 days
+app.post('/api/backfill-gap', async (req, res) => {
+  const days = Math.max(1, Math.min(365, parseInt(req.query.days) || 30));
+  res.json({ message: `Gap-fill triggered (last ${days} days)` });
+
+  (async () => {
+    if (isPolling) { console.log('[gap-fill] Realtime poll busy, skipping.'); return; }
+    isPolling = true;
+    try {
+      if (!cachedDevices.length) await refreshDeviceList();
+      const to   = new Date().toISOString();
+      const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      console.log(`\n[gap-fill] Pulling ${days}d window for ${cachedDevices.length} devices: ${from} → ${to}`);
+
+      let totalInserted = 0;
+      for (const dev of cachedDevices) {
+        // Paginate through the device — gap windows can have thousands of pts
+        let pageNum = 0, pageOffset = 0, hasMore = true;
+        while (hasMore) {
+          try {
+            const data = await clsPost('/retrieve-bulk', {
+              pagination:      { first: 5000, after: pageNum > 0 ? String(pageOffset - 1) : undefined },
+              retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
+              deviceUids:      [dev.deviceUid],
+              fromDatetime:    from,
+              toDatetime:      to,
+              datetimeFormat:  'DATETIME',
+            });
+            const rows     = toRows(data.contents, dev.deviceRef);
+            const inserted = await insertDetections(rows);
+            totalInserted += inserted;
+            console.log(`[gap-fill] ${dev.deviceRef} page ${pageNum}: ${rows.length} pts, +${inserted} new`);
+            hasMore = data.pageInfo?.hasNextPage && rows.length > 0;
+            if (hasMore) {
+              pageOffset += rows.length;
+              pageNum++;
+              await new Promise(r => setTimeout(r, 600));
+            }
+          } catch (e) {
+            console.error(`[gap-fill] ${dev.deviceRef} failed:`, e.message);
+            hasMore = false;
+          }
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+      console.log(`[gap-fill] Done. +${totalInserted} new rows inserted.\n`);
+    } finally {
+      isPolling = false;
+    }
+  })().catch(e => console.error('[gap-fill]', e.message));
 });
 
 // DB stats
