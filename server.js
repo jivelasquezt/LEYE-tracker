@@ -302,45 +302,78 @@ async function runBackfill(devices) {
 // ─────────────────────────────────────────────
 let isPolling = false;
 
+// Cached device list (refreshed every poll cycle to pick up new tags)
+let cachedDevices = [];
+
+async function refreshDeviceList() {
+  try {
+    const devData = await clsPost('/retrieve-device-list', {});
+    cachedDevices = devData.contents || [];
+    console.log(`[poll] device list refreshed: ${cachedDevices.length} devices`);
+  } catch (e) {
+    console.warn('[poll] device list refresh failed (using cache):', e.message);
+  }
+}
+
 async function runRealtimePoll() {
   if (isPolling) { console.log('[poll] Already running, skipping.'); return; }
   isPolling = true;
   console.log('[poll] Starting poll...');
 
   const state = await getPollState();
-  console.log(`\n[poll] Polling realtime (checkpoint: ${state.checkpoint})…`);
+
+  // Make sure we have a device list — needed for per-device queries
+  if (!cachedDevices.length) await refreshDeviceList();
+  if (!cachedDevices.length) {
+    console.error('[poll] No devices known; aborting poll.');
+    isPolling = false;
+    return;
+  }
+
+  // Look back 30 min to comfortably cover the 15-min interval plus any drift.
+  // ON CONFLICT DO NOTHING dedupes overlap with previous polls.
+  const to   = new Date().toISOString();
+  const from = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  console.log(`\n[poll] Polling ${cachedDevices.length} devices for window ${from} → ${to}`);
+
+  let totalInserted = 0;
+  let anyDeviceFailed = false;
+
+  for (const dev of cachedDevices) {
+    try {
+      const data = await clsPost('/retrieve-bulk', {
+        pagination:      { first: 5000 },
+        retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
+        deviceUids:      [dev.deviceUid],
+        fromDatetime:    from,
+        toDatetime:      to,
+        datetimeFormat:  'DATETIME',
+      });
+      const rows     = toRows(data.contents, dev.deviceRef);
+      const inserted = await insertDetections(rows);
+      totalInserted += inserted;
+      console.log(`[poll] ${dev.deviceRef}: ${rows.length} pts, +${inserted} new`);
+      // Small spacing between requests to be polite to the CLS API
+      await new Promise(r => setTimeout(r, 400));
+    } catch (e) {
+      anyDeviceFailed = true;
+      console.error(`[poll] ${dev.deviceRef} failed:`, e.message);
+      if (e.data) console.error('[poll] API error detail:', JSON.stringify(e.data).slice(0, 300));
+    }
+  }
+
+  // last_poll bumps regardless so the UI reflects when we last *tried*
+  await setPollState(state.checkpoint || 0, true);
 
   try {
-    const data = await clsPost('/retrieve-realtime', {
-      fromCheckpoint:  parseInt(state.checkpoint) || 0,
-      pagination:      { first: 5000 },
-      retrieveDoppler: true, retrieveGpsLoc: true, retrieveMetadata: true,
-      datetimeFormat:  'DATETIME',
-    });
-
-    // Log what the API actually returned
-    console.log('[poll] API response keys:', Object.keys(data));
-    console.log('[poll] checkpoint from API:', data.checkpoint, '| current:', state.checkpoint);
-
-    const newCheckpoint = data.checkpoint != null ? parseInt(data.checkpoint) : (parseInt(state.checkpoint) || 0);
-    const rows     = toRows(data.contents);
-    const inserted = await insertDetections(rows);
-
-    await setPollState(newCheckpoint, true);
-
     const total = await db.query('SELECT COUNT(*) FROM detections');
-    console.log(`[poll] +${inserted} new rows | total: ${total.rows[0].count} | checkpoint: ${state.checkpoint} → ${newCheckpoint}`);
-  } catch(e) {
-    console.error('[poll] Failed:', e.message);
-    if (e.data) console.error('[poll] API error detail:', JSON.stringify(e.data).slice(0,300));
-    if (e.message?.includes('429') || e.message?.toLowerCase().includes('checkpoint')) {
-      console.warn('[poll] Resetting checkpoint to 0');
-      await setPollState(0, true);
-    }
-  } finally {
-    isPolling = false;
-    console.log(`[poll] Done. Next poll in ${POLL_INTERVAL / 60000} minutes.\n`);
+    console.log(`[poll] +${totalInserted} new rows | total: ${total.rows[0].count}${anyDeviceFailed ? ' (some devices failed)' : ''}`);
+  } catch (e) {
+    console.error('[poll] count query failed:', e.message);
   }
+
+  isPolling = false;
+  console.log(`[poll] Done. Next poll in ${POLL_INTERVAL / 60000} minutes.\n`);
 }
 
 // ─────────────────────────────────────────────
@@ -356,6 +389,7 @@ async function startup() {
   try {
     const devData = await clsPost('/retrieve-device-list', {});
     devices = devData.contents || [];
+    cachedDevices = devices; // share with realtime poll
     console.log(`[startup] ${devices.length} devices found`);
   } catch(e) {
     console.error('[startup] Device list failed:', e.message);
@@ -447,11 +481,13 @@ app.get('/api/tracks', async (req, res) => {
     }
 
     const state = await getPollState();
+    const ageMin = state.last_poll ? Math.round((Date.now() - new Date(state.last_poll).getTime()) / 60000) : null;
     res.json({
-      devices:        Object.values(byDevice),
-      fromDB:         true,
-      lastPoll:       state.last_poll,
-      pollAgeMinutes: state.last_poll ? Math.round((Date.now() - new Date(state.last_poll).getTime()) / 60000) : null,
+      devices:          Object.values(byDevice),
+      fromDB:           true,
+      lastPoll:         state.last_poll,
+      pollAgeMinutes:   ageMin,
+      cacheAgeMinutes:  ageMin,  // frontend reads this name
     });
   } catch(e) {
     console.error('[/api/tracks]', e.message);
