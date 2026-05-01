@@ -470,6 +470,13 @@ const isMobile = () => window.innerWidth <= 768;
 
 /* AUTO-LOAD FROM CACHE */
 async function autoLoadFromCache(){
+  // Preserve the user's current selection and map view across periodic refreshes.
+  // - First call: no activeBird yet, so we auto-select the first bird with data.
+  // - Later calls: a bird is already selected. We re-render with new data but
+  //   we DON'T re-select or re-fit the map — the user keeps their pan/zoom.
+  const isInitialLoad = !activeBird;
+  const prevActiveUid = activeBird?.deviceUid;
+
   try{
     // Load all time (no date filter) from cache
     const res=await apiFetch(`${API_BASE}/api/tracks`);
@@ -486,11 +493,26 @@ async function autoLoadFromCache(){
         ?(data.cacheAgeMinutes<60?data.cacheAgeMinutes+'m ago':(data.cacheAgeMinutes/60).toFixed(1)+'h ago')
         :'';
       toast(`Loaded ${loaded} birds from cache ${age}`);
-      applyFilter();
-      const first=BIRDS.find(b=>getFilteredPoints(b.deviceUid).length>0)
-        || BIRDS.find(b=>(allBirdData[b.deviceUid]||[]).length>0);
-      if(first) selectBird(first);
-      else { setTimeout(()=>map.invalidateSize(),100); }
+
+      if(isInitialLoad){
+        // First load — pick a bird and zoom to it.
+        applyFilter();
+        const first=BIRDS.find(b=>getFilteredPoints(b.deviceUid).length>0)
+          || BIRDS.find(b=>(allBirdData[b.deviceUid]||[]).length>0);
+        if(first) selectBird(first);
+        else { setTimeout(()=>map.invalidateSize(),100); }
+      } else {
+        // Refresh — keep selection and map view. Re-render the sidebar (so the
+        // "Last:" timestamp updates) and redraw the active bird's track in place.
+        renderSidebar();
+        const stillActive = BIRDS.find(b=>b.deviceUid===prevActiveUid);
+        if(stillActive){
+          activeBird = stillActive;
+          trackLayer.clearLayers(); markerLayer.clearLayers();
+          drawTrackPreserveView(stillActive);
+          renderStats(stillActive);
+        }
+      }
       geocodeAll();
     }
   }catch(e){
@@ -634,6 +656,14 @@ function selectBird(bird){
 
 /* DRAW TRACK */
 function drawTrack(bird){
+  drawTrackInternal(bird, true);
+}
+// Same as drawTrack but skips map.fitBounds — used by periodic refresh
+// so the user's current pan/zoom isn't overridden every 15 minutes.
+function drawTrackPreserveView(bird){
+  drawTrackInternal(bird, false);
+}
+function drawTrackInternal(bird, fit){
   const pts=getFilteredPoints(bird.deviceUid).filter(p=>p.lat&&p.lon).sort((a,b)=>a.dt.localeCompare(b.dt));
   if(!pts.length) return;
   L.polyline(pts.map(p=>[p.lat,p.lon]),{color:bird.color,weight:2,opacity:.65,dashArray:'5 8'}).addTo(trackLayer);
@@ -647,7 +677,7 @@ function drawTrack(bird){
     m.bindTooltip(`<b>${pt.dt.replace('T',' ').slice(0,16)} UTC</b><br>${pt.lat.toFixed(5)}°N ${Math.abs(pt.lon).toFixed(5)}°W<br>Alt: <b>${pt.alt}m</b> · ±${pt.err}m · Class ${pt.cls}<br>Sat: ${pt.sat}`,{direction:'top',offset:[0,-5]});
     m.on('click',()=>L.popup().setLatLng([pt.lat,pt.lon]).setContent(`<b style="font-size:13px">${bird.name}</b><br><span style="color:rgba(255,255,255,.5)">${pt.dt.replace('T',' ').slice(0,16)} UTC</span><br><br><b>${pt.lat.toFixed(5)}°N · ${Math.abs(pt.lon).toFixed(5)}°W</b><br>Altitude: ${pt.alt}m<br>Class ${pt.cls} ±${pt.err}m<br>Sat: ${pt.sat}`).openOn(map));
   });
-  map.fitBounds(L.latLngBounds(pts.map(p=>[p.lat,p.lon])).pad(.2));
+  if(fit) map.fitBounds(L.latLngBounds(pts.map(p=>[p.lat,p.lon])).pad(.2));
 }
 
 function classColor(c){
@@ -756,10 +786,15 @@ async function checkBackend(){
   }catch(e){document.getElementById('statusDot').className='sdot err';document.getElementById('statusText').textContent='Backend offline';}
 }
 
-function fmtDate(dt){return new Date(dt+(dt.endsWith('Z')?'':'Z')).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
+function fmtDate(dt){return new Date(dt+(dt.endsWith('Z')?'':'Z')).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'});}
 function fmtDateTime(dt){
   const d=new Date(dt+(dt.endsWith('Z')?'':'Z'));
-  const utc=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+
+  // Date AND time both in UTC so they refer to the same instant.
+  // Without timeZone:'UTC' on toLocaleDateString, the date would be in the
+  // user's local timezone while the time is forced to UTC, producing a
+  // nonsense composite (e.g. "Apr 30 01:18 UTC" when the real instant is
+  // "May 1 01:18 UTC" / Apr 30 20:18 local).
+  const utc=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'})+' '+
     d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false})+' UTC';
   const local=d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
   const tz=Intl.DateTimeFormat().resolvedOptions().timeZone.split('/').pop().replace('_',' ');
