@@ -796,9 +796,10 @@ function fmtDateTime(dt){
   // "May 1 01:18 UTC" / Apr 30 20:18 local).
   const utc=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'})+' '+
     d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false})+' UTC';
-  const local=d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
+  const localDate=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const localTime=d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
   const tz=Intl.DateTimeFormat().resolvedOptions().timeZone.split('/').pop().replace('_',' ');
-  return utc+' / '+local+' '+tz;
+  return utc+' / '+localDate+' '+localTime+' '+tz;
 }
 function setLoading(v,msg=''){document.getElementById('loadingOverlay').classList.toggle('visible',v);if(msg)document.getElementById('loadingText').textContent=msg;}
 let _tt;
