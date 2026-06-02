@@ -109,7 +109,7 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
 .leg-row{display:flex;align-items:center;gap:7px;margin-bottom:3px;}
 .leg-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
 .leg-lbl{font-size:11px;color:rgba(255,255,255,.7);}
-.map-credits{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:450;font-size:10px;color:rgba(255,255,255,.85);background:rgba(20,30,45,.82);padding:4px 11px;border-radius:11px;white-space:nowrap;pointer-events:none;backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.12);}
+.map-credits{position:absolute;bottom:30px;left:10px;transform:none;z-index:450;font-size:10px;color:rgba(255,255,255,.85);background:rgba(20,30,45,.82);padding:4px 11px;border-radius:11px;white-space:nowrap;pointer-events:none;backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.12);}
 .credits-updated{display:none;}
 
 /* LOADING */
@@ -380,7 +380,9 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
   </div>
 
   <div class="map-wrap">
-    <div id="map"></div>
+    <div id="map">
+      <div class="map-credits">Created by Ornitorracho Labs<span class="credits-updated"> · Last updated: <span id="lastUpdated">—</span></span></div>
+    </div>
 
     <div class="map-legend">
       <div class="leg-title">Location Class</div>
@@ -388,8 +390,6 @@ nav{height:var(--nav-h);background:var(--white);border-bottom:1px solid var(--bo
       <div class="leg-row"><div class="leg-dot" style="background:#fbbf24"></div><div class="leg-lbl">Class B — Medium</div></div>
       <div class="leg-row"><div class="leg-dot" style="background:#94a3b8"></div><div class="leg-lbl">Unknown</div></div>
     </div>
-
-    <div class="map-credits">Created by Ornitorracho Labs<span class="credits-updated"> · Last updated: <span id="lastUpdated">—</span></span></div>
 
     <div class="loading-ov" id="loadingOverlay">
       <div class="spinner"></div>
